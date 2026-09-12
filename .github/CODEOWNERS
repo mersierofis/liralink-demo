@@ -1,0 +1,12 @@
+# Code owners — GitHub requests their review automatically on PRs that touch these paths.
+# The last matching pattern wins.
+
+backend/**        @movilidadagil
+contracts/**      @movilidadagil
+merchant-web/**   @vuslattt
+pay-web/**        @Yunussoydan33
+
+# API contract and specs: everyone is asked to review.
+# Keep docs/** LAST: the last matching pattern wins, so any rule added below it could take docs
+# files away from one of the three owners. Add new patterns above this block.
+docs/**           @movilidadagil @vuslattt @Yunussoydan33
