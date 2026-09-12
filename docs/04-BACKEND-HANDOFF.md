@@ -27,6 +27,7 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
 | GET | `/links?status=&page=&limit=` | Bearer | `{ items: PaymentLink[], total }` (newest first) | Vuslat |
 | GET | `/links/:id` | Bearer | `PaymentLink` | Vuslat |
 | POST | `/links/:id/cancel` | Bearer | `200 PaymentLink` (only if `open`) | Vuslat |
+| POST | `/links/:id/onchain` | Bearer | `200 PaymentLink` — retry only, when `onchain` is `null` | Vuslat |
 | GET | `/pay/:code` | public | `PayQuote` | Yunus |
 | POST | `/pay/:code/submitted` | public | `202 { accepted: true }` (`{ txHash }`) | Yunus |
 | GET | `/pay/:code/status` | public | `PayStatus` | Yunus |
@@ -58,7 +59,11 @@ Build them fully against MSW now (shapes are frozen in `api.types.ts`: `Balance`
    Operation.payment({ destination, asset: usdc, amount: q.amountUSDC })
    Memo.text(memo)
    ```
-   `rails.contract` is present only after the merchant called `POST /links/:id/onchain`; guard on it.
+   `rails.contract` is present when the link is on-chain — `POST /links` creates the invoice
+   automatically (best-effort), so normally from the start; guard on it anyway (absent if that
+   RPC call failed and nobody retried). **Vuslat:** if a link comes back with `onchain: null`, offer a
+   "Retry on-chain" action → `POST /links/:id/onchain`. `POST /links` can take ~5–10 s now (it waits
+   for the Soroban tx) — show a spinner.
    To pay through it: `invoice.pay({ code: invoiceCode, payer: <wallet G...> })` with the TS bindings in
    `packages/invoice-client` (contract id `rails.contract.contractId`), sign with the wallet, send,
    then `POST /pay/:code/submitted` as usual. The contract moves exactly the on-chain amount, so no
@@ -73,7 +78,9 @@ Build them fully against MSW now (shapes are frozen in `api.types.ts`: `Balance`
    before sending. Server also enforces range 1.00–1,000,000.
 
 4. **`amountUSDC` on the pay quote is locked at creation** (`quotedUSDC`), not recomputed from the
-   live rate. It's what the payer must send. `receivedUSDC` is cumulative matched (`"0"` until the
+   live rate. It's what the payer must send. For an on-chain link (`onchain` set / `rails.contract`
+   present) it is locked until `expiresAt` — `quoteExpiresAt === expiresAt`, never re-quoted; only
+   off-chain links re-quote on `/pay/:code` after 10 min. `receivedUSDC` is cumulative matched (`"0"` until the
    first payment); `shortfallUSDC` is present only while `status === 'underpaid'`.
 
 5. **Underpaid / overpaid:** exact send → `paid`. Underpay → link stays `open`/`underpaid` for a

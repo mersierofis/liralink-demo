@@ -22,13 +22,14 @@ export class LinkResponseDto {
   // backward compat; `payments` = every transfer that credited this link.
   payment?: PaymentResponseDto;
   payments: PaymentResponseDto[];
-  // Set once POST /links/:id/onchain recorded it on the current invoice contract deployment.
-  contract?: {
+  // The invoice on the current contract deployment — created best-effort by POST /links, or by
+  // the POST /links/:id/onchain retry; null while the link is not on-chain.
+  onchain: {
     contractId: string;
     invoiceCode: string;
     deadlineLedger: number;
     txHash?: string;
-  };
+  } | null;
   createdAt: string;
 
   static fromEntity(
@@ -53,17 +54,16 @@ export class LinkResponseDto {
     dto.shortfallUSDC = link.shortfallUSDC?.toFixed(7) ?? undefined;
     dto.payments = link.payments.map((p) => PaymentResponseDto.fromEntity(p));
     dto.payment = dto.payments.at(-1);
-    if (
+    dto.onchain =
       link.contractId &&
       link.contractId === config.get<string>('INVOICE_CONTRACT_ID')
-    ) {
-      dto.contract = {
-        contractId: link.contractId,
-        invoiceCode: link.code,
-        deadlineLedger: link.contractDeadlineLedger!,
-        txHash: link.contractTxHash ?? undefined,
-      };
-    }
+        ? {
+            contractId: link.contractId,
+            invoiceCode: link.code,
+            deadlineLedger: link.contractDeadlineLedger!,
+            txHash: link.contractTxHash ?? undefined,
+          }
+        : null;
     dto.createdAt = link.createdAt.toISOString();
     return dto;
   }

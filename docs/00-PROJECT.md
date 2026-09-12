@@ -99,7 +99,7 @@ interface PaymentLink {
   amountTRY: string;             // decimal string, 2 dp, e.g. "5000.00" — locked at creation
   quotedUSDC: string;            // decimal string, 7 dp, quote at creation — locked, never recomputed from what's received
   fxRate: string;                // TRY per 1 USDC at quote time
-  quoteExpiresAt: string;        // quotes valid 10 min; payer page re-quotes
+  quoteExpiresAt: string;        // on-chain links: === expiresAt (quote locked, never re-quoted); otherwise valid 10 min and /pay re-quotes
   status: LinkStatus;
   expiresAt: string;             // default +24h
   payUrl: string;                // "https://pay.liralink.app/p/K7Q2M9XA" (env-based)
@@ -107,7 +107,7 @@ interface PaymentLink {
   shortfallUSDC?: string;        // decimal string, 7 dp — set only while status is 'underpaid'
   payment?: Payment;             // most recent transfer (the completing one once paid) — alias for payments.at(-1)
   payments: Payment[];           // every successful transfer that credited this link (installments + completion), oldest→newest
-  contract?: { contractId: string; invoiceCode: string; deadlineLedger: number; txHash?: string }; // set by POST /links/:id/onchain
+  onchain: { contractId: string; invoiceCode: string; deadlineLedger: number; txHash?: string } | null; // Soroban invoice (§7); null if creation's best-effort call failed
   createdAt: string;
 }
 
@@ -144,7 +144,7 @@ interface PayQuote {                 // what the payer page renders
   status: LinkStatus; expiresAt: string;
   receivedUSDC: string; shortfallUSDC?: string;
   rails: {
-    contract?: { contractId: string; invoiceCode: string };  // only after POST /links/:id/onchain
+    contract?: { contractId: string; invoiceCode: string };  // present while the link is on-chain (PaymentLink.onchain)
     memo?:     { destination: string; memo: string };        // always present
   };
   asset: { code: 'USDC'; issuer: string };
@@ -171,11 +171,11 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 ### Payment links (merchant)
 | Method | Path | Body → Response |
 |---|---|---|
-| POST | `/links` | `{ title, description?, amountTRY, expiresInHours? }` → `201 PaymentLink` |
+| POST | `/links` | `{ title, description?, amountTRY, expiresInHours? }` → `201 PaymentLink` — also creates the Soroban invoice (§7) best-effort, locking `quotedUSDC` until `expiresAt`; if RPC fails the link is still `201` with `onchain: null` |
 | GET | `/links?status=&page=&limit=` | → `{ items: PaymentLink[], total }` (newest first) |
 | GET | `/links/:id` | → `PaymentLink` |
 | POST | `/links/:id/cancel` | → `PaymentLink` (only if `open`; also cancels the on-chain invoice, best-effort) |
-| POST | `/links/:id/onchain` | → `PaymentLink` with `contract` set — records the link on the Soroban invoice contract (§7) so `/pay/:code` offers `rails.contract`. Only if `open` with nothing received (`409` otherwise); a repeat call on a link already on-chain returns it unchanged; locks `quotedUSDC` until `expiresAt`; `503` if no contract is configured |
+| POST | `/links/:id/onchain` | → `PaymentLink` with `onchain` set — manual retry when creation's best-effort invoice failed (`onchain: null`). Uses the link's existing `quotedUSDC` (no re-quote) and locks it until `expiresAt`. Only if `open` with nothing received (`409` otherwise); a link already on-chain is returned unchanged; `503` if no contract is configured |
 
 ### Money (merchant)
 | Method | Path | Response |
@@ -189,7 +189,7 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 ### Payer (public, no auth)
 | Method | Path | Response |
 |---|---|---|
-| GET | `/pay/:code` | `PayQuote` (re-quotes if quote expired and status is `open`) |
+| GET | `/pay/:code` | `PayQuote` (re-quotes if quote expired, status is `open`, and the link is **not** on-chain — on-chain quotes are locked) |
 | POST | `/pay/:code/submitted` | `{ txHash }` → `202 { accepted: true }` — hint so backend checks this tx immediately; detection also works without it |
 | GET | `/pay/:code/status` | `{ status: LinkStatus, receivedUSDC, shortfallUSDC?, payment?: Payment, payments: Payment[] }` — poll every 2 s (`payments` = every transfer, `payment` = the latest/completing one) |
 

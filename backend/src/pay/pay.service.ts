@@ -34,7 +34,15 @@ export class PayService {
     });
     if (!link) throw new NotFoundException('Payment link not found');
 
-    if (link.status === 'open' && link.quoteExpiresAt < new Date()) {
+    // On-chain links never re-quote: the invoice amount was fixed at creation (locked-FX policy).
+    const onchain =
+      link.contractId !== null &&
+      link.contractId === this.invoiceContract.contractId;
+    if (
+      link.status === 'open' &&
+      !onchain &&
+      link.quoteExpiresAt < new Date()
+    ) {
       link = await this.requote(link.id, link.amountTRY.toString());
     }
 

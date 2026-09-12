@@ -57,7 +57,7 @@ export class LinksService {
     const quoteExpiresAt = new Date(now.getTime() + quoteTtlMinutes * 60_000);
     const expiresAt = new Date(now.getTime() + expiresInHours * 3_600_000);
 
-    return this.createWithRetry(
+    const link = await this.createWithRetry(
       merchantId,
       dto,
       amountTRY,
@@ -66,6 +66,26 @@ export class LinksService {
       quoteExpiresAt,
       expiresAt,
     );
+    return this.tryPutOnchain(link);
+  }
+
+  /** Best-effort on-chain invoice at creation: an RPC failure never fails POST /links — the link
+   * comes back with `onchain: null` and POST /links/:id/onchain is the manual retry. */
+  private async tryPutOnchain(
+    link: LinkWithRelations,
+  ): Promise<LinkWithRelations> {
+    const contractId = this.invoiceContract.contractId;
+    if (!contractId) return link;
+    try {
+      await this.recordOnchain(link, contractId);
+      return await this.findOneForMerchant(link.merchantId, link.id);
+    } catch (err) {
+      this.logger.warn(
+        `Link ${link.code} created without an on-chain invoice (retry: POST /links/${link.id}/onchain): ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
+      return link;
+    }
   }
 
   private async createWithRetry(
@@ -176,9 +196,8 @@ export class LinksService {
   }
 
   /**
-   * Records the link as an invoice on the Soroban contract so the payer can pay through it
-   * (`rails.contract`). The quote is locked until the link expires, because the on-chain
-   * amount can't follow a re-quote. Calling it again for a link already on-chain is a no-op.
+   * Manual retry for a link whose best-effort on-chain invoice failed at creation. Calling it
+   * for a link already on the current contract returns the link unchanged.
    */
   async putOnchain(merchantId: string, id: string): Promise<LinkWithRelations> {
     const contractId = this.invoiceContract.contractId;
@@ -194,19 +213,27 @@ export class LinksService {
         `Cannot put a link on-chain once it is "${link.status}" or has received a payment`,
       );
     }
+    await this.recordOnchain(link, contractId);
+    return this.findOneForMerchant(merchantId, id);
+  }
+
+  /**
+   * Records the link as an invoice on the Soroban contract (`rails.contract`) at its current
+   * `quotedUSDC` — never re-quoted — and locks that quote until the link expires, since the
+   * on-chain amount can't follow a re-quote (locked-FX policy).
+   */
+  private async recordOnchain(
+    link: LinkWithRelations,
+    contractId: string,
+  ): Promise<void> {
+    const id = link.id;
     if (link.expiresAt.getTime() - Date.now() < MIN_ONCHAIN_LIFETIME_MS) {
       throw new ConflictException('Link expires too soon to put on-chain');
     }
 
-    let quotedUSDC = link.quotedUSDC;
-    if (link.quoteExpiresAt < new Date()) {
-      const { rate } = await this.fxService.getRate();
-      quotedUSDC = this.fxService.quote(link.amountTRY, rate);
-    }
-
     const invoice = await this.invoiceContract.createInvoice(
       link.code,
-      quotedUSDC,
+      link.quotedUSDC,
       link.expiresAt,
     );
     // Normally the amount we sent; differs only if an earlier attempt already created it.
@@ -232,7 +259,6 @@ export class LinksService {
       `Link ${link.code} on-chain: ${invoice.amountUSDC.toFixed(7)} USDC until ledger ` +
         `${invoice.deadlineLedger}, tx ${invoice.txHash ?? '(already existed)'}`,
     );
-    return this.findOneForMerchant(merchantId, id);
   }
 
   /** Best-effort: if this fails, a later contract payment is still detected and lands as stray

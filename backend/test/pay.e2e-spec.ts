@@ -58,10 +58,10 @@ describe('Pay (e2e)', () => {
       amountTRY: '340.00',
       amountUSDC: '10.0000000',
       status: 'open',
-      memo: code,
+      rails: { memo: { memo: code } },
       network: 'testnet',
     });
-    expect(res.body.destination).toMatch(/^G[A-Z0-9]{55}$/);
+    expect(res.body.rails.memo.destination).toMatch(/^G[A-Z0-9]{55}$/);
     expect(res.body.asset).toEqual({
       code: 'USDC',
       issuer: expect.any(String),
