@@ -123,6 +123,18 @@ export function useWithdrawals(filters: { page?: number; limit?: number } = {}) 
   })
 }
 
+/** Mock-only dev toggle (03-MERCHANT-WEB.md step 7) — POST /mock/pay/:id isn't part of the
+ * real API contract; the button that calls this only renders when VITE_USE_MOCK=true. */
+export function useSimulatePayment() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (linkId: string) => apiRequest<{ accepted: true }>(`/mock/pay/${linkId}`, { method: 'POST' }),
+    onSuccess: (_, linkId) => {
+      queryClient.invalidateQueries({ queryKey: ['links', linkId] })
+    },
+  })
+}
+
 export function useCreateWithdrawal() {
   const queryClient = useQueryClient()
   return useMutation({
