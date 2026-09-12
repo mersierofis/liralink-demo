@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
 
 import { apiRequest } from './client'
-import type { AuthResult, LinkStatus, Merchant, Paginated, PaymentLink } from './types'
+import type { AuthResult, Balance, LinkStatus, Merchant, Paginated, PaymentLink, PaymentListItem } from './types'
 
 export function useMe(enabled: boolean) {
   return useQuery({
@@ -86,5 +86,26 @@ export function useCancelLink() {
       queryClient.invalidateQueries({ queryKey: ['links'] })
       queryClient.setQueryData(['links', link.id], link)
     },
+  })
+}
+
+export function useBalance() {
+  return useQuery({
+    queryKey: ['balance'],
+    queryFn: () => apiRequest<Balance>('/balance'),
+    refetchInterval: 5000,
+  })
+}
+
+export function usePayments(filters: { page?: number; limit?: number } = {}) {
+  const params = new URLSearchParams()
+  if (filters.page) params.set('page', String(filters.page))
+  if (filters.limit) params.set('limit', String(filters.limit))
+  const qs = params.toString()
+
+  return useQuery({
+    queryKey: ['payments', filters],
+    queryFn: () => apiRequest<Paginated<PaymentListItem>>(`/payments${qs ? `?${qs}` : ''}`),
+    refetchInterval: 5000,
   })
 }
