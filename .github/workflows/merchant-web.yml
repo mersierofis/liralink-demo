@@ -1,0 +1,56 @@
+name: merchant-web
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: merchant-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      merchant-web: ${{ steps.filter.outputs.merchant-web }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            merchant-web:
+              - 'merchant-web/**'
+              - '.nvmrc'
+              - '.github/workflows/merchant-web.yml'
+
+  # The required status check. Skipped (= passing) when the PR doesn't touch merchant-web/.
+  merchant-web:
+    needs: changes
+    if: needs.changes.outputs.merchant-web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: merchant-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: merchant-web/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Build
+        run: npm run build
