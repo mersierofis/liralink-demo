@@ -6,6 +6,10 @@
 //! the classic memo rail. One invoice per `code` (the same 8-char link code used by
 //! the memo rail). See docs/00-PROJECT.md §7.
 //!
+//! Authorization: `create` and `cancel` require the **admin** (the LiraLink platform
+//! account, pinned at deploy). `merchant` is only the payout address that `pay`
+//! transfers to — merchants never sign anything (custody model, README).
+//!
 //! Events (the backend polls RPC `getEvents` for these; first topic is the event name,
 //! second is the invoice code):
 //! - `["created", code]` → `{ merchant, amount, deadline }`
@@ -44,7 +48,7 @@ pub enum Status {
 #[contracttype]
 #[derive(Clone)]
 pub struct Invoice {
-    pub merchant: Address,
+    pub merchant: Address, // payout address only — never asked to authorize
     pub code: Symbol,
     pub amount: i128,
     pub deadline: u32, // ledger sequence after which the invoice can no longer be paid
@@ -55,6 +59,7 @@ pub struct Invoice {
 #[contracttype]
 pub enum DataKey {
     Token,           // instance: the USDC SAC address that `pay` transfers
+    Admin,           // instance: the platform account allowed to create/cancel invoices
     Invoice(Symbol), // persistent: one invoice per code
 }
 
@@ -103,18 +108,26 @@ fn bump_invoice(env: &Env, key: &DataKey, deadline: u32) {
     env.storage().persistent().extend_ttl(key, live_for, live_for);
 }
 
+fn require_admin(env: &Env) {
+    let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+    admin.require_auth();
+}
+
 #[contract]
 pub struct InvoiceContract;
 
 #[contractimpl]
 impl InvoiceContract {
-    /// Deploy-time: pin the token (USDC Stellar Asset Contract address) that `pay` transfers.
-    pub fn __constructor(env: Env, token: Address) {
+    /// Deploy-time: pin the token (USDC Stellar Asset Contract address) that `pay` transfers
+    /// and the admin (platform account) that may create and cancel invoices.
+    pub fn __constructor(env: Env, token: Address, admin: Address) {
         env.storage().instance().set(&DataKey::Token, &token);
+        env.storage().instance().set(&DataKey::Admin, &admin);
         bump_instance(&env);
     }
 
-    /// Merchant records an invoice on-chain. Fails if `code` already exists or `amount <= 0`.
+    /// Admin records an invoice payable to `merchant`. Fails if `code` already exists or
+    /// `amount <= 0`.
     pub fn create(
         env: Env,
         merchant: Address,
@@ -122,7 +135,7 @@ impl InvoiceContract {
         amount: i128,
         deadline: u32,
     ) -> Result<(), Error> {
-        merchant.require_auth();
+        require_admin(&env);
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -195,12 +208,12 @@ impl InvoiceContract {
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotFound))
     }
 
-    /// Merchant cancels a still-pending invoice (authorized by the merchant).
+    /// Admin cancels a still-pending invoice.
     pub fn cancel(env: Env, code: Symbol) -> Result<(), Error> {
+        require_admin(&env);
         let key = DataKey::Invoice(code.clone());
         let mut invoice: Invoice =
             env.storage().persistent().get(&key).ok_or(Error::NotFound)?;
-        invoice.merchant.require_auth();
         if invoice.status != Status::Pending {
             return Err(Error::NotPending);
         }

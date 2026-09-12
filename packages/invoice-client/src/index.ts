@@ -34,7 +34,7 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CBN6Q5MPD3BUXAZNG3VPYWQ42EUAOBGDFW3WWDJVGTMRRJFZO7EBJVWE",
+    contractId: "CDKZYQI4HI347ZVAMXT2XPHLYDSDKN6ERELKASGJDII6AQU6ROFQ45EJ",
   }
 } as const
 
@@ -53,7 +53,7 @@ export enum Status {
   Cancelled = 2,
 }
 
-export type DataKey = {tag: "Token", values: void} | {tag: "Invoice", values: readonly [string]};
+export type DataKey = {tag: "Token", values: void} | {tag: "Admin", values: void} | {tag: "Invoice", values: readonly [string]};
 
 
 export interface Invoice {
@@ -83,13 +83,14 @@ export interface Client {
 
   /**
    * Construct and simulate a cancel transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Merchant cancels a still-pending invoice (authorized by the merchant).
+   * Admin cancels a still-pending invoice.
    */
   cancel: ({code}: {code: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
    * Construct and simulate a create transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Merchant records an invoice on-chain. Fails if `code` already exists or `amount <= 0`.
+   * Admin records an invoice payable to `merchant`. Fails if `code` already exists or
+   * `amount <= 0`.
    */
   create: ({merchant, code, amount, deadline}: {merchant: string, code: string, amount: i128, deadline: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
@@ -97,7 +98,7 @@ export interface Client {
 export class Client extends ContractClient {
   static async deploy<T = Client>(
         /** Constructor/Initialization Args for the contract's `__constructor` method */
-        {token}: {token: string},
+        {token, admin}: {token: string, admin: string},
     /** Options for initializing a Client as well as for calling a method, with extras specific to deploying. */
     options: MethodOptions &
       Omit<ContractClientOptions, "contractId"> & {
@@ -109,22 +110,22 @@ export class Client extends ContractClient {
         format?: "hex" | "base64";
       }
   ): Promise<AssembledTransaction<T>> {
-    return ContractClient.deploy({token}, options)
+    return ContractClient.deploy({token, admin}, options)
   }
   constructor(public readonly options: ContractClientOptions) {
     super(
       new ContractSpec([ "AAAABQAAAAAAAAAAAAAABFBhaWQAAAABAAAABHBhaWQAAAAEAAAAAAAAAARjb2RlAAAAEQAAAAEAAAAAAAAABXBheWVyAAAAAAAAEwAAAAAAAAAAAAAACG1lcmNoYW50AAAAEwAAAAAAAAAAAAAABmFtb3VudAAAAAAACwAAAAAAAAAC",
         "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAABQAAAAAAAAANQWxyZWFkeUV4aXN0cwAAAAAAAAEAAAAAAAAACE5vdEZvdW5kAAAAAgAAAAAAAAAKTm90UGVuZGluZwAAAAAAAwAAAAAAAAAHRXhwaXJlZAAAAAAEAAAAAAAAAA1JbnZhbGlkQW1vdW50AAAAAAAABQ==",
         "AAAAAwAAAAAAAAAAAAAABlN0YXR1cwAAAAAAAwAAAAAAAAAHUGVuZGluZwAAAAAAAAAAAAAAAARQYWlkAAAAAQAAAAAAAAAJQ2FuY2VsbGVkAAAAAAAAAg==",
-        "AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAAAgAAAAAAAAAAAAAABVRva2VuAAAAAAAAAQAAAAAAAAAHSW52b2ljZQAAAAABAAAAEQ==",
+        "AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAAAwAAAAAAAAAAAAAABVRva2VuAAAAAAAAAAAAAAAAAAAFQWRtaW4AAAAAAAABAAAAAAAAAAdJbnZvaWNlAAAAAAEAAAAR",
         "AAAAAQAAAAAAAAAAAAAAB0ludm9pY2UAAAAABgAAAAAAAAAGYW1vdW50AAAAAAALAAAAAAAAAARjb2RlAAAAEQAAAAAAAAAIZGVhZGxpbmUAAAAEAAAAAAAAAAhtZXJjaGFudAAAABMAAAAAAAAABXBheWVyAAAAAAAD6AAAABMAAAAAAAAABnN0YXR1cwAAAAAH0AAAAAZTdGF0dXMAAA==",
         "AAAABQAAAAAAAAAAAAAAB0NyZWF0ZWQAAAAAAQAAAAdjcmVhdGVkAAAAAAQAAAAAAAAABGNvZGUAAAARAAAAAQAAAAAAAAAIbWVyY2hhbnQAAAATAAAAAAAAAAAAAAAGYW1vdW50AAAAAAALAAAAAAAAAAAAAAAIZGVhZGxpbmUAAAAEAAAAAAAAAAI=",
         "AAAABQAAAAAAAAAAAAAACUNhbmNlbGxlZAAAAAAAAAEAAAAJY2FuY2VsbGVkAAAAAAAAAgAAAAAAAAAEY29kZQAAABEAAAABAAAAAAAAAAhtZXJjaGFudAAAABMAAAAAAAAAAg==",
         "AAAAAAAAAD9SZWFkIGFuIGludm9pY2UuIFBhbmljcyB3aXRoIGBOb3RGb3VuZGAgaWYgdGhlIGNvZGUgaXMgdW5rbm93bi4AAAAAA2dldAAAAAABAAAAAAAAAARjb2RlAAAAEQAAAAEAAAfQAAAAB0ludm9pY2UA",
         "AAAAAAAAAJNQYXllciBzZXR0bGVzIGEgcGVuZGluZywgdW5leHBpcmVkIGludm9pY2U6IHRyYW5zZmVycyBgYW1vdW50YCBvZiB0aGUgcGlubmVkCnRva2VuIHBheWVyIC0+IG1lcmNoYW50IChhdXRob3JpemVkIGJ5IHRoZSBwYXllciksIHRoZW4gbWFya3MgaXQgUGFpZC4AAAAAA3BheQAAAAACAAAAAAAAAARjb2RlAAAAEQAAAAAAAAAFcGF5ZXIAAAAAAAATAAAAAQAAA+kAAAACAAAAAw==",
-        "AAAAAAAAAEZNZXJjaGFudCBjYW5jZWxzIGEgc3RpbGwtcGVuZGluZyBpbnZvaWNlIChhdXRob3JpemVkIGJ5IHRoZSBtZXJjaGFudCkuAAAAAAAGY2FuY2VsAAAAAAABAAAAAAAAAARjb2RlAAAAEQAAAAEAAAPpAAAAAgAAAAM=",
-        "AAAAAAAAAFZNZXJjaGFudCByZWNvcmRzIGFuIGludm9pY2Ugb24tY2hhaW4uIEZhaWxzIGlmIGBjb2RlYCBhbHJlYWR5IGV4aXN0cyBvciBgYW1vdW50IDw9IDBgLgAAAAAABmNyZWF0ZQAAAAAABAAAAAAAAAAIbWVyY2hhbnQAAAATAAAAAAAAAARjb2RlAAAAEQAAAAAAAAAGYW1vdW50AAAAAAALAAAAAAAAAAhkZWFkbGluZQAAAAQAAAABAAAD6QAAAAIAAAAD",
-        "AAAAAAAAAFZEZXBsb3ktdGltZTogcGluIHRoZSB0b2tlbiAoVVNEQyBTdGVsbGFyIEFzc2V0IENvbnRyYWN0IGFkZHJlc3MpIHRoYXQgYHBheWAgdHJhbnNmZXJzLgAAAAAADV9fY29uc3RydWN0b3IAAAAAAAABAAAAAAAAAAV0b2tlbgAAAAAAABMAAAAA" ]),
+        "AAAAAAAAACZBZG1pbiBjYW5jZWxzIGEgc3RpbGwtcGVuZGluZyBpbnZvaWNlLgAAAAAABmNhbmNlbAAAAAAAAQAAAAAAAAAEY29kZQAAABEAAAABAAAD6QAAAAIAAAAD",
+        "AAAAAAAAAGBBZG1pbiByZWNvcmRzIGFuIGludm9pY2UgcGF5YWJsZSB0byBgbWVyY2hhbnRgLiBGYWlscyBpZiBgY29kZWAgYWxyZWFkeSBleGlzdHMgb3IKYGFtb3VudCA8PSAwYC4AAAAGY3JlYXRlAAAAAAAEAAAAAAAAAAhtZXJjaGFudAAAABMAAAAAAAAABGNvZGUAAAARAAAAAAAAAAZhbW91bnQAAAAAAAsAAAAAAAAACGRlYWRsaW5lAAAABAAAAAEAAAPpAAAAAgAAAAM=",
+        "AAAAAAAAAJtEZXBsb3ktdGltZTogcGluIHRoZSB0b2tlbiAoVVNEQyBTdGVsbGFyIEFzc2V0IENvbnRyYWN0IGFkZHJlc3MpIHRoYXQgYHBheWAgdHJhbnNmZXJzCmFuZCB0aGUgYWRtaW4gKHBsYXRmb3JtIGFjY291bnQpIHRoYXQgbWF5IGNyZWF0ZSBhbmQgY2FuY2VsIGludm9pY2VzLgAAAAANX19jb25zdHJ1Y3RvcgAAAAAAAAIAAAAAAAAABXRva2VuAAAAAAAAEwAAAAAAAAAFYWRtaW4AAAAAAAATAAAAAA==" ]),
       options
     )
   }

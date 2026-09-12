@@ -202,7 +202,7 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 
 ## 7. Soroban invoice contract (phase 2, Hasan — required; frontends get an optional second pay button)
 
-`contracts/invoice` — records invoices on-chain so a payer can pay *through* the contract using the USDC Stellar Asset Contract. Functions: `create(merchant: Address, code: Symbol, amount: i128, deadline: u32)`, `pay(code: Symbol, payer: Address)` (calls `token.transfer(payer → merchant)` with `payer.require_auth()`), `get(code) -> Invoice`, `cancel(code)` (merchant auth). This is a **required phase-2 deliverable**. The payer page gets a second "Pay via contract" button; the classic memo rail stays as the fallback so the live demo never depends on the contract.
+`contracts/invoice` — records invoices on-chain so a payer can pay *through* the contract using the USDC Stellar Asset Contract. Functions: `create(merchant: Address, code: Symbol, amount: i128, deadline: u32)`, `pay(code: Symbol, payer: Address)` (calls `token.transfer(payer → merchant)` with `payer.require_auth()`), `get(code) -> Invoice`, `cancel(code)`. Deployed with `__constructor(token, admin)`: `create` and `cancel` require the **admin** (platform account) auth — merchants are custodial and never sign; `merchant` is only the payout address. Live ids: `docs/deployments.md`. This is a **required phase-2 deliverable**. The payer page gets a second "Pay via contract" button; the classic memo rail stays as the fallback so the live demo never depends on the contract.
 
 ## 8. Conventions (all apps)
 
