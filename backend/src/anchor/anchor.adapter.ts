@@ -9,6 +9,19 @@ export const ANCHOR_ADAPTERS = Symbol('ANCHOR_ADAPTERS');
 
 export type AnchorProviderName = 'mock' | 'sep24';
 
+/**
+ * How TRY reaches the merchant. `balance`: it accrues in availableTRY and is withdrawn manually.
+ * `auto_payout`: the anchor pays the merchant's IBAN during settlement (docs/anchor.md).
+ */
+export type SettlementMode = 'balance' | 'auto_payout';
+
+/** Providers whose completed settlements accrue to availableTRY; every other one pays out. */
+export const BALANCE_MODE_PROVIDERS: string[] = ['mock'];
+
+export function settlementModeFor(provider: string): SettlementMode {
+  return BALANCE_MODE_PROVIDERS.includes(provider) ? 'balance' : 'auto_payout';
+}
+
 /** The persisted progress of one settlement, as the adapter sees it. */
 export interface SettlementAnchorState {
   id: string;
@@ -27,7 +40,8 @@ export type AnchorSettlementPatch = Partial<
 >;
 
 export type SettleResult =
-  | { status: 'completed'; ref: string }
+  /** feeUSDC: what the anchor kept of amountUSDC — netTRY is derived from it. */
+  | { status: 'completed'; ref: string; feeUSDC: Decimal }
   /** Started and not finished yet — the minute job calls settleToTRY again to resume. */
   | { status: 'processing'; ref: string }
   /** Can't start yet (nothing sent); stays `pending` with this reason and is retried. */

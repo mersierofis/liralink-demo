@@ -6,7 +6,8 @@ How LiraLink turns a paid link's USDC into fiat through a Stellar anchor. Code:
 **testanchor.stellar.org** (SDF's reference anchor, USD out); a real TRY anchor is the same code
 path with a different `ANCHOR_HOME_DOMAIN`.
 
-`ANCHOR_PROVIDER=mock` stays the default for the demo. API shapes are identical in both modes —
+`ANCHOR_PROVIDER=mock` stays the default for the demo. API shapes are the same in both modes (only
+`settlementMode` and the balance bucket differ — see *Settlement mode*) —
 a settlement is `pending → processing → completed`, `provider: 'sep24'`, `anchorRef` = the
 anchor's transaction id.
 
@@ -60,9 +61,11 @@ auto-save).
    not on Horizon **and** a ledger has closed after its `maxTime`. Within one process, a settlement
    never has two adapter calls in flight.
 7. **Wait for the anchor.** `pending_user_transfer_complete` / `pending_anchor` /
-   `pending_external` … → `processing`. `completed` → settlement `completed` (TRY credited to
-   `availableTRY`). `error` / `expired` / `refunded` / `no_market` / `too_small` / `too_large` →
-   settlement `failed`.
+   `pending_external` … → `processing`. `completed` → settlement `completed`, with `feeUSDC` from the
+   anchor's `fee_details` (else `amount_fee`) and `netTRY` = `amountTRY` × (`amountUSDC` − fee) /
+   `amountUSDC`, rounded down; it counts toward `paidOutTRY` (the anchor paid the IBAN). A fee in any
+   asset other than our USDC keeps the settlement `processing` with a logged error.
+   `error` / `expired` / `refunded` / `no_market` / `too_small` / `too_large` → settlement `failed`.
 
 One adapter call follows the anchor for up to 2 minutes (poll every 3 s), then returns
 `processing`; `SettlementsService.reconcile` (every minute, and at boot) resumes every unfinished
@@ -81,22 +84,29 @@ changes later (`ANCHOR_ADAPTERS` holds both).
 - Statuses seen: `incomplete → pending_user_transfer_start → pending_anchor → pending_external →
   completed`.
 
+## Settlement mode (decided 2026-09-12)
+
+`sep24` = **auto-payout per link**: the anchor pays the merchant's IBAN during settlement.
+`GET /me` and `/health` return `settlementMode: 'auto_payout'` (mock: `'balance'`). Completed sep24
+settlements count toward `Balance.paidOutTRY` (by `netTRY`), never `availableTRY`, and
+`POST /withdrawals` returns `409 "Payouts are automatic in this mode"`. The bucket follows the
+provider a settlement was created with, so switching `ANCHOR_PROVIDER` never moves completed money.
+
 ## Known gaps / open decisions
 
-- **Withdrawals in `sep24` mode fail.** A SEP-24 withdraw pays the fiat out to the bank at
-  settlement time, so there is no separate "TRY payout" step; `payoutTRY` rejects with an explicit
-  error. How `POST /withdrawals` should behave with a real anchor (settlement credits a ledger that
-  is withdrawn later vs. anchor pays the IBAN directly per link) is a product decision still open.
 - **Anchor limits vs. link sizes.** Links above the anchor's per-transaction maximum (10 USDC on
   testanchor ≈ 340 TRY at 34.00) stay `pending/outside_anchor_limits`. Splitting into several
   withdraws is not built.
-- **Anchor fee** is not reflected in the ledger: the merchant is credited the locked `amountTRY`.
 - Single-process guard only — running two backend instances against one DB would need a DB lock
   around the payment step.
 
 ## Testing
 
-- Unit: `src/anchor/sep24.spec.ts` (status mapping, limits, memo types, JWT expiry).
+- Unit: `src/anchor/sep24.spec.ts` (status mapping, limits, memo types, fee parsing, JWT expiry),
+  `src/settlements/settlement-math.spec.ts` (`netSettlementTRY`).
 - Live e2e (spends 1 real testnet USDC per run, needs network):
   `SEP24_E2E=1 npm run test:e2e -- sep24` — `missing_iban` and `outside_anchor_limits` blocks, then
-  a full 1 USDC settlement to `completed`, checked on Horizon. Skipped unless `SEP24_E2E=1`.
+  a full 1 USDC settlement to `completed`, checked on Horizon, with `feeUSDC` 0.1 and `netTRY` 30.60
+  in `paidOutTRY`. Skipped unless `SEP24_E2E=1`.
+- Non-live e2e: `test/auto-payout.e2e-spec.ts` — `settlementMode`, `409` on withdrawals, `paidOutTRY`
+  bucket (no calls to the anchor).

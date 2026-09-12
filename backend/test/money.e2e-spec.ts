@@ -107,6 +107,7 @@ describe('Settlements, balance, withdrawals, payments (e2e)', () => {
     expect(res.body).toEqual({
       availableTRY: '0.00',
       pendingTRY: '0.00',
+      paidOutTRY: '0.00',
       savedUSDC: '0.0000000',
       unallocatedUSDC: '0.0000000',
     });
@@ -116,6 +117,7 @@ describe('Settlements, balance, withdrawals, payments (e2e)', () => {
     const link = await createPaidLink('340.00');
     const balance = await balanceWhen((b) => b.availableTRY === '340.00');
     expect(balance.pendingTRY).toBe('0.00');
+    expect(balance.paidOutTRY).toBe('0.00');
 
     const settlements = await auth(http().get('/api/settlements')).expect(200);
     expect(settlements.body.total).toBe(1);
@@ -123,6 +125,8 @@ describe('Settlements, balance, withdrawals, payments (e2e)', () => {
       amountTRY: '340.00',
       amountUSDC: '10.0000000',
       savedUSDC: '0.0000000',
+      feeUSDC: '0.0000000',
+      netTRY: '340.00',
       provider: 'mock',
       status: 'completed',
     });

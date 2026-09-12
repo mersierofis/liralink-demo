@@ -3,8 +3,10 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
+import { settlementModeFor } from '../anchor/anchor.adapter';
 import { Merchant } from '../generated/prisma/client';
 import { MerchantResponseDto } from '../merchants/dto/merchant-response.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,7 +14,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { JwtPayload } from './jwt.strategy';
 
-const BCRYPT_COST = 10;
+export const BCRYPT_COST = 10;
 
 export interface AuthResult {
   token: string;
@@ -24,6 +26,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly config: ConfigService,
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthResult> {
@@ -56,7 +59,10 @@ export class AuthService {
     const payload: JwtPayload = { sub: merchant.id, email: merchant.email };
     return {
       token: this.jwtService.sign(payload),
-      merchant: MerchantResponseDto.fromEntity(merchant),
+      merchant: MerchantResponseDto.fromEntity(
+        merchant,
+        settlementModeFor(this.config.get<string>('ANCHOR_PROVIDER')!),
+      ),
     };
   }
 }

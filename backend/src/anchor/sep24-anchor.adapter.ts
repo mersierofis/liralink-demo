@@ -22,6 +22,7 @@ import {
 } from './anchor.adapter';
 import {
   jwtExpiresAt,
+  sep24FeeUSDC,
   Sep24Info,
   sep24Phase,
   Sep24Transaction,
@@ -101,8 +102,17 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
     for (;;) {
       const txn = await this.getTransaction(ref);
       switch (sep24Phase(txn.status)) {
-        case 'completed':
-          return { status: 'completed', ref };
+        case 'completed': {
+          const usdcAsset = `stellar:${this.usdc.getCode()}:${this.usdc.getIssuer()}`;
+          const feeUSDC = sep24FeeUSDC(txn, usdcAsset);
+          if (!feeUSDC) {
+            // Stays processing and is retried — crediting the gross would overstate the payout.
+            throw new Error(
+              `withdraw ${ref}: fee is not in ${usdcAsset} (${JSON.stringify(txn.fee_details ?? txn.amount_fee_asset)})`,
+            );
+          }
+          return { status: 'completed', ref, feeUSDC };
+        }
         case 'failed':
           return {
             status: 'failed',

@@ -16,9 +16,31 @@ export interface Sep24Transaction {
   status: string;
   message?: string;
   amount_in?: string;
+  amount_in_asset?: string;
+  amount_fee?: string;
+  amount_fee_asset?: string;
+  fee_details?: { total?: string; asset?: string };
   withdraw_anchor_account?: string;
   withdraw_memo?: string;
   withdraw_memo_type?: string;
+}
+
+/**
+ * The anchor's fee in our USDC (`usdcAsset` = `stellar:CODE:ISSUER`): `fee_details` (current
+ * SEP-24), else the deprecated `amount_fee`; no fee reported → 0. A fee without an asset is in the
+ * asset sent. Null when it is in another asset — it can't be netted against the USDC.
+ */
+export function sep24FeeUSDC(
+  txn: Sep24Transaction,
+  usdcAsset: string,
+): Decimal | null {
+  const [total, asset] =
+    txn.fee_details?.total !== undefined
+      ? [txn.fee_details.total, txn.fee_details.asset]
+      : [txn.amount_fee, txn.amount_fee_asset];
+  if (total === undefined) return new Decimal(0);
+  const feeAsset = asset ?? txn.amount_in_asset ?? usdcAsset;
+  return feeAsset === usdcAsset ? new Decimal(total) : null;
 }
 
 /** What LiraLink does next for a SEP-24 withdraw status. */

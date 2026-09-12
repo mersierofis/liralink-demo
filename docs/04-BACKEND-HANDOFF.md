@@ -8,8 +8,8 @@
 
 **Status as of 2026-09-12:** Phase 1 endpoints, the Soroban contract rail, and the Phase 2
 money endpoints (`/balance`, `/payments`, `/settlements`, `/withdrawals`) are implemented and match
-the contract. The anchor is the **mock** adapter (settlements/payouts complete after ~3 s); the real
-SEP-24 anchor is next and doesn't change any shape.
+the contract. The live anchor is the **mock** adapter (settlements/payouts complete after ~3 s). A SEP-24
+anchor adapter also exists; it switches `settlementMode` to `'auto_payout'` (§2) — build for both modes.
 
 ---
 
@@ -22,7 +22,7 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
 | POST | `/auth/register` | – | `201 { token, merchant }` | Vuslat |
 | POST | `/auth/login` | – | `200 { token, merchant }` | Vuslat |
 | GET | `/me` | Bearer | `Merchant` | Vuslat |
-| PATCH | `/me` | Bearer | `Merchant` (`{ businessName?, iban?, autoSavePercent? }`) | Vuslat |
+| PATCH | `/me` | Bearer | `Merchant` (`{ businessName?, iban?, autoSavePercent?, currentPassword?, newPassword? }`) | Vuslat |
 | POST | `/links` | Bearer | `201 PaymentLink` | Vuslat |
 | GET | `/links?status=&page=&limit=` | Bearer | `{ items: PaymentLink[], total }` (newest first) | Vuslat |
 | GET | `/links/:id` | Bearer | `PaymentLink` | Vuslat |
@@ -53,6 +53,14 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
 - `PaymentListItem.settlement` is `null` for installment payments that didn't complete a link.
 - `savedUSDC` / auto-save: a settlement keeps `autoSavePercent`% of the USDC and credits
   `amountTRY` × (100 − `autoSavePercent`)%.
+- **`settlementMode`** (on `GET /me`, the auth `merchant`, and `/health`) decides the money UI:
+  - `'balance'` (mock anchor — live today): TRY accrues in `availableTRY`; the merchant withdraws manually.
+  - `'auto_payout'` (SEP-24 anchor): the anchor pays the merchant's IBAN during settlement. Completed
+    settlements count toward **`paidOutTRY`** instead of `availableTRY`, and `POST /withdrawals` returns
+    `409` with message `"Payouts are automatic in this mode"`.
+- **Fees:** a completed settlement carries `feeUSDC` (what the anchor kept) and `netTRY` (TRY actually
+  credited or paid out). Balances use `netTRY`, not `amountTRY` — testanchor keeps 10%, so a 34.00 TRY
+  link nets 30.60. Both are `null` until the settlement completes; the mock fee is `"0.0000000"`.
 
 ---
 
@@ -102,8 +110,10 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
    `cancelled`). The `/submitted` POST is only a fire-and-forget hint to speed detection up —
    detection works without it, so don't block the UI on its response.
 
-7. **Status codes:** `400` validation · `401` bad/no token · `404` unknown link/code ·
-   `409` invalid state transition (e.g. cancel a `paid` link) · `422` business rule
+7. **Status codes:** `400` validation · `401` bad/no token · `403` wrong `currentPassword` on a
+   password change (inline error — do **not** log out) · `404` unknown link/code ·
+   `409` invalid state transition (e.g. cancel a `paid` link, or `POST /withdrawals` in `auto_payout`
+   mode) · `422` business rule
    (withdraw > `availableTRY`). Map these in your `client.ts` `ApiError` handler;
    Vuslat: redirect to `/login` on `401`.
 
@@ -149,6 +159,14 @@ npm run start:dev             # http://localhost:3000 , Swagger at /docs
 - [ ] **Live now too:** dashboard balance, `/payments`, `/settlements`, `/withdrawals` (§2) — flip
       `VITE_USE_MOCK=false` when ready; the shapes are the ones in `api.types.ts`.
 - [ ] `amountTRY` formatted to exactly 2 dp before `POST /links` (gotcha #3).
+- [ ] Read `settlementMode` from `GET /me`. When it is `'auto_payout'`: **hide the Withdraw button**
+      (and the withdraw dialog/page action), show a **"Paid to IBAN"** column in the payments table
+      (the settlement's `netTRY` once `status === 'completed'`), and make the **Balance card show
+      "Paid out TRY"** (`paidOutTRY`). In `'balance'` mode keep today's UI.
+- [ ] Show `netTRY` (not `amountTRY`) as the credited amount on settlements; show `feeUSDC` when `> 0`.
+- [ ] Settings: "Change password" form → `PATCH /me { currentPassword, newPassword }` (≥ 8 chars).
+      `400` if one field is missing, `403` wrong current password.
+- [ ] Demo account `demo@liralink.app` — the password is not in the repo any more: ask Hasan.
 - [ ] The projector demo moment: `/links/:id` flips `open → paid` live while Yunus pays.
 
 ---
