@@ -182,21 +182,41 @@ describe('match', () => {
     });
   });
 
-  it('ignores a payment to an already-paid link', () => {
+  it('treats a payment to an already-paid link as stray (recorded + credited to unallocatedUSDC)', () => {
     const result = match(baseOp(), { ...openLink, status: 'paid' }, cfg);
     expect(result).toEqual({
-      kind: 'ignored',
+      kind: 'stray',
+      amountUSDC: new Decimal('10.0000000'),
       reason: 'link status is "paid"',
     });
   });
 
-  it('ignores a payment to an expired link', () => {
-    const result = match(baseOp(), { ...openLink, status: 'expired' }, cfg);
-    expect(result.kind).toBe('ignored');
+  it('treats a payment to an expired link as stray, carrying this op amount', () => {
+    const result = match(
+      baseOp({ amount: '3.0000000' }),
+      { ...openLink, status: 'expired' },
+      cfg,
+    );
+    expect(result).toEqual({
+      kind: 'stray',
+      amountUSDC: new Decimal('3.0000000'),
+      reason: 'link status is "expired"',
+    });
   });
 
-  it('ignores a payment to a cancelled link', () => {
+  it('treats a payment to a cancelled link as stray', () => {
     const result = match(baseOp(), { ...openLink, status: 'cancelled' }, cfg);
-    expect(result.kind).toBe('ignored');
+    expect(result.kind).toBe('stray');
+    if (result.kind === 'stray') {
+      expect(result.reason).toBe('link status is "cancelled"');
+    }
+  });
+
+  it('does NOT treat a memo matching no link as stray — that stays ignored', () => {
+    // stray only applies when the memo resolves to a real link; an unknown memo is ignored.
+    expect(match(baseOp(), null, cfg)).toEqual({
+      kind: 'ignored',
+      reason: 'no matching link for memo',
+    });
   });
 });

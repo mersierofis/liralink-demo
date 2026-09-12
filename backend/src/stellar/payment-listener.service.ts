@@ -233,6 +233,15 @@ export class PaymentListenerService implements OnModuleInit, OnModuleDestroy {
         result.shortfallUSDC,
       );
       await this.paymentsService.recordAttempt(op, linkCode, 'underpaid');
+    } else if (result.kind === 'stray') {
+      await this.paymentsService.recordStray(
+        linkEntity!.id,
+        linkEntity!.merchantId,
+        op,
+        linkCode,
+        result.amountUSDC,
+        result.reason,
+      );
     } else {
       await this.paymentsService.recordAttempt(op, linkCode, result.reason);
     }

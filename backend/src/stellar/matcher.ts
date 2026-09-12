@@ -55,6 +55,11 @@ export type MatchResult =
       totalReceivedUSDC: Decimal;
       shortfallUSDC: Decimal;
     }
+  // a valid USDC payment whose memo matches a real link that is no longer payable
+  // (paid/expired/cancelled). The money still arrived at the platform, so the caller
+  // records the attempt AND credits the amount to the link's merchant.unallocatedUSDC
+  // (never auto-converted to TRY) — see PaymentsService.recordStray.
+  | { kind: 'stray'; amountUSDC: Decimal; reason: string }
   | { kind: 'ignored'; reason: string };
 
 /** Decodes a base64 memo payload into the uppercase link code it should represent. */
@@ -83,7 +88,11 @@ export function match(
   }
   if (!link) return { kind: 'ignored', reason: 'no matching link for memo' };
   if (link.status !== 'open' && link.status !== 'underpaid')
-    return { kind: 'ignored', reason: `link status is "${link.status}"` };
+    return {
+      kind: 'stray',
+      amountUSDC: new Decimal(op.amount),
+      reason: `link status is "${link.status}"`,
+    };
 
   const amountUSDC = new Decimal(op.amount);
   const totalReceivedUSDC = link.receivedUSDC.plus(amountUSDC);

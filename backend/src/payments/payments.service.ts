@@ -6,10 +6,19 @@ import { PrismaService } from '../prisma/prisma.service';
 import { InboundOp } from '../stellar/matcher';
 
 export const PAYMENT_DETECTED_EVENT = 'payment.detected';
+export const PAYMENT_STRAY_EVENT = 'payment.stray';
 
 export interface PaymentDetectedEvent {
   payment: Payment;
   linkId: string;
+}
+
+export interface PaymentStrayEvent {
+  linkId: string;
+  merchantId: string;
+  txHash: string;
+  amountUSDC: string;
+  reason: string;
 }
 
 @Injectable()
@@ -110,5 +119,49 @@ export class PaymentsService {
     this.logger.warn(
       `Payment attempt not credited: tx ${op.txHash}, reason: ${reason}`,
     );
+  }
+
+  /**
+   * Stray payment: a valid USDC payment whose memo matches a real link that is no
+   * longer payable (paid/expired/cancelled). The money reached the platform, so we
+   * both record the attempt (audit) AND credit it to the link's merchant as
+   * unallocatedUSDC — never auto-converted to TRY. Emits `payment.stray`.
+   */
+  async recordStray(
+    linkId: string,
+    merchantId: string,
+    op: InboundOp,
+    linkCode: string | null,
+    amountUSDC: Decimal,
+    reason: string,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.paymentAttempt.create({
+        data: {
+          opId: op.opId,
+          linkCode: linkCode ?? undefined,
+          txHash: op.txHash,
+          fromAddr: op.from,
+          amountUSDC,
+          assetCode: op.assetCode ?? 'unknown',
+          reason: `stray: ${reason}`,
+        },
+      });
+      await tx.merchant.update({
+        where: { id: merchantId },
+        data: { unallocatedUSDC: { increment: amountUSDC } },
+      });
+    });
+    this.logger.warn(
+      `Stray payment: tx ${op.txHash}, ${amountUSDC.toFixed(7)} USDC ` +
+        `credited to merchant.unallocatedUSDC (${reason})`,
+    );
+    this.events.emit(PAYMENT_STRAY_EVENT, {
+      linkId,
+      merchantId,
+      txHash: op.txHash,
+      amountUSDC: amountUSDC.toFixed(7),
+      reason,
+    } satisfies PaymentStrayEvent);
   }
 }

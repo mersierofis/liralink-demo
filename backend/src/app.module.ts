@@ -3,6 +3,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './auth/auth.module';
+import { BalanceModule } from './balance/balance.module';
 import { ConfigModule } from './config/config.module';
 import { FxModule } from './fx/fx.module';
 import { HealthModule } from './health/health.module';
@@ -21,6 +22,7 @@ import { StellarModule } from './stellar/stellar.module';
     PrismaModule,
     AuthModule,
     MerchantsModule,
+    BalanceModule,
     FxModule,
     LinksModule,
     StellarModule,
