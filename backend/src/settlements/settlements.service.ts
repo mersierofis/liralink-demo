@@ -18,7 +18,11 @@ import {
   type PaymentDetectedEvent,
 } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { netSettlementTRY, splitSettlement } from './settlement-math';
+import {
+  InvalidFeeError,
+  netSettlementTRY,
+  splitSettlement,
+} from './settlement-math';
 
 // A pending/processing mock settlement older than this was interrupted (process restart) — re-run it.
 const STUCK_AFTER_MS = 5 * 60_000;
@@ -124,11 +128,30 @@ export class SettlementsService implements OnApplicationBootstrap {
       });
       switch (result.status) {
         case 'completed': {
-          const netTRY = netSettlementTRY(
-            settlement.amountTRY,
-            settlement.amountUSDC,
-            result.feeUSDC,
-          );
+          let netTRY: ReturnType<typeof netSettlementTRY>;
+          try {
+            netTRY = netSettlementTRY(
+              settlement.amountTRY,
+              settlement.amountUSDC,
+              result.feeUSDC,
+            );
+          } catch (err) {
+            if (!(err instanceof InvalidFeeError)) throw err;
+            // Terminal, not transient: the anchor's reported fee won't change on a retry.
+            await this.prisma.settlement.update({
+              where: { id },
+              data: {
+                status: 'failed',
+                anchorRef: result.ref,
+                failReason: 'invalid_fee',
+                feeUSDC: result.feeUSDC,
+              },
+            });
+            this.logger.error(
+              `Settlement ${id} failed (invalid_fee): ${err.message} — not retried`,
+            );
+            break;
+          }
           await this.prisma.settlement.update({
             where: { id },
             data: {
@@ -167,11 +190,18 @@ export class SettlementsService implements OnApplicationBootstrap {
           }
           break;
         case 'failed':
+          // Terminal: failed settlements are never picked up by reconcile again.
           await this.prisma.settlement.update({
             where: { id },
-            data: { status: 'failed', anchorRef: result.ref },
+            data: {
+              status: 'failed',
+              anchorRef: result.ref,
+              failReason: result.reason,
+            },
           });
-          this.logger.error(`Settlement ${id} failed: ${result.reason}`);
+          this.logger.error(
+            `Settlement ${id} failed (${result.reason}): ${result.detail} — not retried`,
+          );
           break;
       }
     } catch (err) {

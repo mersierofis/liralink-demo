@@ -67,6 +67,10 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
 - **Fees:** a completed settlement carries `feeUSDC` (what the anchor kept) and `netTRY` (TRY actually
   credited or paid out). Balances use `netTRY`, not `amountTRY` — testanchor keeps 10%, so a 34.00 TRY
   link nets 30.60. Both are `null` until the settlement completes; the mock fee is `"0.0000000"`.
+- **Failed settlements** (`status === 'failed'`) carry `failReason` — `unexpected_fee_asset`,
+  `invalid_fee`, `anchor_status` or `amount_mismatch` (`null` on every other status). They are
+  terminal (never retried) and count toward no balance; show "Settlement failed" with the reason —
+  the platform reconciles them by hand.
 
 ---
 
