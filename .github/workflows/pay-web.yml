@@ -41,6 +41,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # pay-web is not scaffolded yet (only a README) — pass until a package.json lands.
+      # TODO(Yunus): remove this step and every `if: steps.scaffold…` / `--if-present` below in the
+      # pay-web scaffold PR, so a missing script fails CI instead of silently passing.
       - name: Detect scaffold
         id: scaffold
         run: |

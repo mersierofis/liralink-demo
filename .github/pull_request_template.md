@@ -21,3 +21,11 @@
 
 - [ ] No
 - [ ] Yes — describe the change:
+
+## Migration?
+
+<!-- Backend PRs touching backend/prisma/migrations. Live deploys run `prisma migrate deploy`, so say
+     what the migration does to existing rows (e.g. nullable columns only, backfill, destructive). -->
+
+- [ ] No
+- [ ] Yes — what it does:
