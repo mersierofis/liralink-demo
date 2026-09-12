@@ -9,6 +9,7 @@ nvm use                        # pins Node 22.23.2, see repo-root .nvmrc
 docker compose up -d            # Postgres 16 on localhost:5433 (5432 may already be taken locally)
 cp .env.example .env            # then fill in PLATFORM_ACCOUNT_SECRET — see below
 npx prisma migrate dev
+npm run seed                    # idempotent: demo@liralink.app / demo1234 (never fabricates payments)
 npm run start:dev               # /docs (Swagger) at http://localhost:3000/docs
 ```
 
