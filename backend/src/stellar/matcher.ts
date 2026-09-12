@@ -1,11 +1,7 @@
 import { Decimal } from '../common/decimal';
 
 export type LinkStatusForMatch =
-  | 'open'
-  | 'underpaid'
-  | 'paid'
-  | 'expired'
-  | 'cancelled';
+  'open' | 'underpaid' | 'paid' | 'expired' | 'cancelled';
 
 /** Decoupled from the Stellar SDK's own types on purpose — the SDK has shipped
  * four majors in thirteen months; an anti-corruption layer here keeps the

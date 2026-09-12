@@ -19,7 +19,8 @@
     "test:watch": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --watch",
     "test:cov": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage",
     "test:debug": "cross-env NODE_OPTIONS=--experimental-vm-modules node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --config ./test/jest-e2e.json --forceExit"
+    "test:e2e:migrate": "sh -c 'set -a && . ./.env.test && set +a && case \"$DATABASE_URL\" in *_test) prisma migrate deploy ;; *) echo \"refusing: .env.test DATABASE_URL is not a *_test database\" >&2; exit 1 ;; esac'",
+    "test:e2e": "npm run test:e2e:migrate && cross-env NODE_OPTIONS=--experimental-vm-modules jest --config ./test/jest-e2e.json --forceExit"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
