@@ -6,7 +6,7 @@
 
 ## Stack (do not deviate)
 
-- **Vite + React 18 + TypeScript (strict)**, desktop-first, responsive down to tablet
+- **Vite + React 19 + TypeScript (strict)**, desktop-first, responsive down to tablet
 - **Tailwind CSS** + **shadcn/ui** (Table, Card, Badge, Dialog, Sheet, Form, Input, Select, Tabs, Toast/Sonner, Skeleton)
 - **TanStack Query** (fetching, polling), **react-hook-form + zod** (forms)
 - **React Router v6**

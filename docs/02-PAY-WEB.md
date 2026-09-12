@@ -6,7 +6,7 @@
 
 ## Stack (do not deviate)
 
-- **Vite + React 18 + TypeScript (strict)**, mobile-first, PWA (`vite-plugin-pwa`) so it installs to the home screen and looks native on the demo phone
+- **Vite + React 19 + TypeScript (strict)**, mobile-first, PWA (`vite-plugin-pwa`) so it installs to the home screen and looks native on the demo phone
 - **Tailwind CSS** + **shadcn/ui** (Button, Card, Badge, Skeleton, Alert, Sheet)
 - **TanStack Query** for fetching + polling
 - **React Router v6** — routes: `/p/:code` (payment page), `/` (redirect to a "no link" explainer)
