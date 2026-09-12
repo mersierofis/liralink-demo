@@ -51,7 +51,8 @@ pay-web (React PWA, Yunus)    ──┘                 │                  ─
 
 - **Payment rail (core):** classic Stellar **USDC payment with a text memo = link code** to the platform's collection account. Simple, wallet-friendly, detectable via Horizon payment stream. No contract needed for the core flow.
 - **Settlement:** backend credits merchant TRY balance when payment is detected; `AnchorService` executes USDC→TRY. In `mock` mode settlement completes instantly (for demo reliability). In `sep24` mode it drives a real anchor.
-- **Custody model (hackathon):** one platform collection account holds USDC; merchant balances are ledger rows in Postgres. Document this as a hackathon simplification; roadmap = per-merchant smart accounts.
+- **Custody model (hackathon):** one platform collection account holds USDC; merchant balances are ledger rows in Postgres. Document this as a hackathon simplification; roadmap = non-custodial per-link SEP-24 withdrawal (funds go straight to the anchor) + per-merchant smart accounts.
+- **Exact-amount policy** (implemented): `amountTRY` and `quotedUSDC` are locked at link creation. Settlement always credits `link.amountTRY`, never `receivedUSDC × fxRate`. `received == quotedUSDC` → `paid`; `received < quotedUSDC` → `underpaid` (link stays open for a top-up payment; `receivedUSDC`/`shortfallUSDC` track progress); `received > quotedUSDC` → `paid`, with the excess credited to `merchant.unallocatedUSDC` (visible in the panel, never auto-converted to TRY).
 
 **Monorepo layout (single GitHub repo under `mdg-yazilim/liralink`):**
 ```
@@ -75,7 +76,8 @@ Each app has its own `package.json`. No shared workspace tooling needed; a copy 
 ## 5. Domain model
 
 ```ts
-type LinkStatus   = 'open' | 'paid' | 'expired' | 'cancelled';
+type LinkStatus   = 'open' | 'underpaid' | 'paid' | 'expired' | 'cancelled';
+type PayRail      = 'contract' | 'memo';       // 'contract' reserved for the Soroban invoice rail (phase 3, not yet built)
 type SettleStatus = 'pending' | 'processing' | 'completed' | 'failed';
 type WdStatus     = 'requested' | 'processing' | 'completed' | 'failed';
 
@@ -83,6 +85,7 @@ interface Merchant {
   id: string; email: string; businessName: string;
   iban?: string;                 // for withdrawals
   autoSavePercent: number;       // 0–50, default 0 (DeFindex stretch)
+  unallocatedUSDC: string;       // decimal string, 7 dp — excess from overpaid links, awaiting manual handling
   createdAt: string;
 }
 
@@ -93,19 +96,22 @@ interface PaymentLink {
   merchantName: string;          // denormalized for the payer page
   title: string;                 // "Lemon order #1042"
   description?: string;
-  amountTRY: string;             // decimal string, 2 dp, e.g. "5000.00"
-  quotedUSDC: string;            // decimal string, 7 dp, quote at creation
+  amountTRY: string;             // decimal string, 2 dp, e.g. "5000.00" — locked at creation
+  quotedUSDC: string;            // decimal string, 7 dp, quote at creation — locked, never recomputed from what's received
   fxRate: string;                // TRY per 1 USDC at quote time
   quoteExpiresAt: string;        // quotes valid 10 min; payer page re-quotes
   status: LinkStatus;
   expiresAt: string;             // default +24h
   payUrl: string;                // "https://pay.liralink.app/p/K7Q2M9XA" (env-based)
-  payment?: Payment;             // present when paid
+  receivedUSDC: string;          // decimal string, 7 dp — cumulative USDC matched so far ("0" until first payment)
+  shortfallUSDC?: string;        // decimal string, 7 dp — set only while status is 'underpaid'
+  payment?: Payment;             // present when paid — the completing transaction
   createdAt: string;
 }
 
 interface Payment {
   id: string; linkId: string;
+  rail: PayRail;                 // 'memo' today — the only rail implemented
   txHash: string; payerAddress: string;
   amountUSDC: string; ledger: number;
   explorerUrl: string;
@@ -127,15 +133,18 @@ interface Withdrawal {
 }
 
 interface Balance {
-  availableTRY: string; pendingTRY: string; savedUSDC: string;
+  availableTRY: string; pendingTRY: string; savedUSDC: string; unallocatedUSDC: string;
 }
 
 interface PayQuote {                 // what the payer page renders
   code: string; merchantName: string; title: string; description?: string;
   amountTRY: string; amountUSDC: string; fxRate: string; quoteExpiresAt: string;
   status: LinkStatus; expiresAt: string;
-  destination: string;               // platform collection account (G...)
-  memo: string;                      // = code
+  receivedUSDC: string; shortfallUSDC?: string;
+  rails: {
+    contract?: { contractId: string; invoiceCode: string };  // absent until the Soroban invoice contract exists
+    memo?:     { destination: string; memo: string };        // the only rail today
+  };
   asset: { code: 'USDC'; issuer: string };
   network: 'testnet';
   payment?: Payment;                 // when paid
@@ -167,7 +176,7 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 ### Money (merchant)
 | Method | Path | Response |
 |---|---|---|
-| GET | `/balance` | `Balance` |
+| GET | `/balance` | `Balance` (includes `unallocatedUSDC`) |
 | GET | `/payments?page=&limit=` | `{ items: (Payment & { link: Pick<PaymentLink,'code'|'title'|'amountTRY'>, settlement: Settlement })[], total }` |
 | GET | `/settlements?page=&limit=` | `{ items: Settlement[], total }` |
 | POST | `/withdrawals` | `{ amountTRY, iban? }` → `201 Withdrawal` (400 if > availableTRY) |
@@ -178,7 +187,7 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 |---|---|---|
 | GET | `/pay/:code` | `PayQuote` (re-quotes if quote expired and status is `open`) |
 | POST | `/pay/:code/submitted` | `{ txHash }` → `202 { accepted: true }` — hint so backend checks this tx immediately; detection also works without it |
-| GET | `/pay/:code/status` | `{ status: LinkStatus, payment?: Payment }` — poll every 2 s |
+| GET | `/pay/:code/status` | `{ status: LinkStatus, receivedUSDC, shortfallUSDC?, payment?: Payment }` — poll every 2 s |
 
 ### System
 | Method | Path | Response |

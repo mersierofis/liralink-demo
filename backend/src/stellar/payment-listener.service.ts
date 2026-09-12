@@ -210,6 +210,7 @@ export class PaymentListenerService implements OnModuleInit, OnModuleDestroy {
           code: linkEntity.code,
           status: linkEntity.status,
           quotedUSDC: linkEntity.quotedUSDC,
+          receivedUSDC: linkEntity.receivedUSDC,
         }
       : null;
 
@@ -218,16 +219,22 @@ export class PaymentListenerService implements OnModuleInit, OnModuleDestroy {
     if (result.kind === 'paid') {
       await this.paymentsService.recordPayment(
         linkEntity!.id,
+        linkEntity!.merchantId,
         op,
         result.amountUSDC,
+        result.totalReceivedUSDC,
+        result.excessUSDC,
         tx.ledger_attr,
       );
-    } else {
-      await this.paymentsService.recordAttempt(
-        op,
-        linkCode,
-        result.kind === 'underpaid' ? 'underpaid' : result.reason,
+    } else if (result.kind === 'underpaid') {
+      await this.paymentsService.recordUnderpayment(
+        linkEntity!.id,
+        result.totalReceivedUSDC,
+        result.shortfallUSDC,
       );
+      await this.paymentsService.recordAttempt(op, linkCode, 'underpaid');
+    } else {
+      await this.paymentsService.recordAttempt(op, linkCode, result.reason);
     }
 
     await this.advanceCursor(record.paging_token);

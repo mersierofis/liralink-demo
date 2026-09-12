@@ -14,9 +14,15 @@ datasource db {
 
 enum LinkStatus {
   open
+  underpaid
   paid
   expired
   cancelled
+}
+
+enum PayRail {
+  contract
+  memo
 }
 
 enum SettleStatus {
@@ -40,6 +46,9 @@ model Merchant {
   businessName    String
   iban            String?
   autoSavePercent Int      @default(0)
+  // Excess USDC from overpaid links, parked here rather than auto-converted —
+  // visible to the merchant, handled manually (refund or credit at current rate).
+  unallocatedUSDC Decimal  @default(0) @db.Decimal(20, 7)
   createdAt       DateTime @default(now())
 
   links       PaymentLink[]
@@ -60,6 +69,12 @@ model PaymentLink {
   quoteExpiresAt DateTime
   status         LinkStatus @default(open)
   expiresAt      DateTime
+  // Cumulative USDC matched to this link so far (across partial + completing
+  // payments). Settlement always credits the locked `amountTRY`, never
+  // `receivedUSDC * fxRate` — see PaymentsService.
+  receivedUSDC   Decimal    @default(0) @db.Decimal(20, 7)
+  // Set only while status is `underpaid`; cleared once the link is paid.
+  shortfallUSDC  Decimal?   @db.Decimal(20, 7)
   createdAt      DateTime   @default(now())
 
   payment Payment?
@@ -75,6 +90,9 @@ model Payment {
   txHash       String      @unique
   payerAddress String
   amountUSDC   Decimal     @db.Decimal(20, 7)
+  // 'contract' once the Soroban invoice contract rail exists; 'memo' for the
+  // classic text-memo payment, the only rail implemented so far.
+  rail         PayRail     @default(memo)
   ledger       Int
   detectedAt   DateTime    @default(now())
 

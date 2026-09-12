@@ -1,6 +1,11 @@
 import { Decimal } from '../common/decimal';
 
-export type LinkStatusForMatch = 'open' | 'paid' | 'expired' | 'cancelled';
+export type LinkStatusForMatch =
+  | 'open'
+  | 'underpaid'
+  | 'paid'
+  | 'expired'
+  | 'cancelled';
 
 /** Decoupled from the Stellar SDK's own types on purpose — the SDK has shipped
  * four majors in thirteen months; an anti-corruption layer here keeps the
@@ -23,6 +28,8 @@ export interface LinkForMatch {
   code: string;
   status: LinkStatusForMatch;
   quotedUSDC: Decimal;
+  /** Cumulative USDC already matched to this link (0 if never partially paid). */
+  receivedUSDC: Decimal;
 }
 
 export interface MatchConfig {
@@ -32,8 +39,22 @@ export interface MatchConfig {
 }
 
 export type MatchResult =
-  | { kind: 'paid'; amountUSDC: Decimal }
-  | { kind: 'underpaid'; amountUSDC: Decimal }
+  // received (this op's amount + prior receivedUSDC) meets or exceeds quotedUSDC.
+  // `excessUSDC` is 0 for an exact match, >0 for an overpayment — the caller
+  // routes any excess to the merchant's unallocatedUSDC, never back into TRY.
+  | {
+      kind: 'paid';
+      amountUSDC: Decimal;
+      totalReceivedUSDC: Decimal;
+      excessUSDC: Decimal;
+    }
+  // received stays below quotedUSDC — link stays open for a top-up payment.
+  | {
+      kind: 'underpaid';
+      amountUSDC: Decimal;
+      totalReceivedUSDC: Decimal;
+      shortfallUSDC: Decimal;
+    }
   | { kind: 'ignored'; reason: string };
 
 /** Decodes a base64 memo payload into the uppercase link code it should represent. */
@@ -61,11 +82,24 @@ export function match(
     return { kind: 'ignored', reason: 'missing or non-text memo' };
   }
   if (!link) return { kind: 'ignored', reason: 'no matching link for memo' };
-  if (link.status !== 'open')
+  if (link.status !== 'open' && link.status !== 'underpaid')
     return { kind: 'ignored', reason: `link status is "${link.status}"` };
 
   const amountUSDC = new Decimal(op.amount);
-  if (amountUSDC.lessThan(link.quotedUSDC))
-    return { kind: 'underpaid', amountUSDC };
-  return { kind: 'paid', amountUSDC };
+  const totalReceivedUSDC = link.receivedUSDC.plus(amountUSDC);
+
+  if (totalReceivedUSDC.lessThan(link.quotedUSDC)) {
+    return {
+      kind: 'underpaid',
+      amountUSDC,
+      totalReceivedUSDC,
+      shortfallUSDC: link.quotedUSDC.minus(totalReceivedUSDC),
+    };
+  }
+  return {
+    kind: 'paid',
+    amountUSDC,
+    totalReceivedUSDC,
+    excessUSDC: totalReceivedUSDC.minus(link.quotedUSDC),
+  };
 }

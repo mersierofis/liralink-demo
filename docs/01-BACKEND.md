@@ -86,7 +86,7 @@ QUOTE_TTL_MINUTES=10
 
 ## Prisma schema (essentials)
 
-Tables: `Merchant`, `PaymentLink` (unique `code`), `Payment` (unique `txHash`), `Settlement`, `Withdrawal`, `ProcessedOperation` (unique Horizon operation id — idempotency for the listener), **`ListenerCursor`** (single row, persists the Horizon paging token so a restart resumes instead of replaying or skipping), **`PaymentAttempt`** (opId, linkCode?, txHash, from, amountUSDC, assetCode, reason, createdAt — records underpaid/unmatched inbound operations that never became a `Payment`; the original brief required "storing the attempt" without naming a table for it). Money columns as `Decimal(20,7)`. Index `PaymentLink(code)`, `PaymentLink(merchantId, createdAt)`.
+Tables: `Merchant` (includes `unallocatedUSDC`, default 0 — excess from overpaid links), `PaymentLink` (unique `code`; includes `receivedUSDC` default 0 and nullable `shortfallUSDC` for the exact-amount policy below), `Payment` (unique `txHash`; includes `rail` — `'memo'` today, `'contract'` reserved for the not-yet-built Soroban rail), `Settlement`, `Withdrawal`, `ProcessedOperation` (unique Horizon operation id — idempotency for the listener), **`ListenerCursor`** (single row, persists the Horizon paging token so a restart resumes instead of replaying or skipping), **`PaymentAttempt`** (opId, linkCode?, txHash, from, amountUSDC, assetCode, reason, createdAt — records underpaid/unmatched inbound operations that never became a `Payment`; the original brief required "storing the attempt" without naming a table for it). `LinkStatus` includes `underpaid`. Money columns as `Decimal(20,7)`. Index `PaymentLink(code)`, `PaymentLink(merchantId, createdAt)`.
 
 ---
 
@@ -108,15 +108,17 @@ On startup `StellarService` loads keypair from `PLATFORM_ACCOUNT_SECRET`, checks
 - Code generator: 8 chars from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O/1/I), retry on collision.
 - `POST /links`: validate `amountTRY` decimal string ≥ 1.00, ≤ 1,000,000; create with quote; `payUrl = PAY_WEB_BASE_URL + '/' + code`.
 - Cron every minute: `open` links past `expiresAt` → `expired`.
-- `GET /pay/:code`: if `open` and quote expired → re-quote and persist. Return `PayQuote` including `destination` (platform pubkey), `memo = code`, asset consts.
+- `GET /pay/:code`: if `open` and quote expired → re-quote and persist. Return `PayQuote` including `rails.memo` (`destination` = platform pubkey, `memo = code`), asset consts, `receivedUSDC`, `shortfallUSDC?`.
 
 ### 1.6 PaymentListener (the heart)
 - On module init, open Horizon stream: `server.payments().forAccount(platform).join('transactions').cursor(lastCursor ?? 'now').stream({ onmessage, onerror })`. **`.join('transactions')` embeds the full transaction (including memo) in every streamed record at zero extra HTTP cost** — confirmed live against Horizon testnet SSE; do not call `op.transaction()` separately, it's redundant once joined. Persist the paging token after each processed message (table `ListenerCursor`) so restarts don't skip payments; the SDK's cursor advance is in-memory only.
 - Accept **`payment`, `path_payment_strict_receive`, and `path_payment_strict_send`** operation types — a payer swapping XLM→USDC in one tx produces a path payment that still credits USDC to `to`; filtering on `type === 'payment'` alone silently drops that money.
-- For each op: read the joined transaction's `memo_type === 'text'` and **`memo_bytes`** (base64) — compare `memo_bytes` against the base64 of the expected code, not the lossy UTF-8 `memo` field. Match: `to === platform`, `asset_type === 'credit_alphanum4'` **and** `asset_code === USDC` **and** `asset_issuer === USDC_ISSUER` (all three — code alone isn't enough, anyone can issue an asset called `USDC`), memo equals an `open` link code.
-- Validate `amount >= link.quotedUSDC` (allow overpay; log underpay as `payment.underpaid` and **do not** mark paid — leave link open, store the attempt).
+- For each op: read the joined transaction's `memo_type === 'text'` and **`memo_bytes`** (base64) — compare `memo_bytes` against the base64 of the expected code, not the lossy UTF-8 `memo` field. Match: `to === platform`, `asset_type === 'credit_alphanum4'` **and** `asset_code === USDC` **and** `asset_issuer === USDC_ISSUER` (all three — code alone isn't enough, anyone can issue an asset called `USDC`), memo equals a link that is `open` **or** `underpaid` (a link that's already partially paid keeps accepting a top-up).
+- **Exact-amount policy** (amounts locked at link creation; never recompute TRY from received USDC — see `matcher.ts`): `totalReceivedUSDC = link.receivedUSDC + thisOp.amount`.
+  - `totalReceivedUSDC == quotedUSDC` → link `paid`, `Payment` created for this tx (`rail: 'memo'`).
+  - `totalReceivedUSDC < quotedUSDC` → link `underpaid`; persist `receivedUSDC`/`shortfallUSDC` on the link; log the op to `PaymentAttempt` (reason `underpaid`) for audit — no `Payment` row yet, link stays payable for a later top-up.
+  - `totalReceivedUSDC > quotedUSDC` → link `paid`, `Payment` created for this tx; the excess (`totalReceivedUSDC - quotedUSDC`) is credited to `merchant.unallocatedUSDC` in the same DB transaction — never auto-converted to TRY.
 - Idempotency: insert `ProcessedOperation(opId)` first, in the same DB transaction as the state change and the cursor update; skip if the unique constraint rejects it (reconnects **will** replay operations you've already seen).
-- On match: create `Payment`, set link `paid`, emit `payment.detected`.
 - `POST /pay/:code/submitted { txHash }`: fetch tx from Horizon immediately and run the same matcher (covers stream lag). 202 always.
 - Reconnect with your own exponential backoff on stream error — **the SDK does not back off**; its only auto-reconnect is a 15s-default watchdog timer that fires on silence, not on error. `/health.listener` reflects state.
 - Run a periodic (e.g. every 2 min) REST reconciliation poll over the same cursor range through the same matcher, since SSE can stall silently without erroring.
@@ -128,9 +130,11 @@ On startup `StellarService` loads keypair from `PLATFORM_ACCOUNT_SECRET`, checks
 3. Fund a payer account with testnet USDC (faucet.circle.com → Stellar testnet, or mint via Circle faucet to the payer's address after adding a trustline). Send `10 USDC` to the platform address with **text memo = link code** using Stellar Lab.
 4. Within ~5 s the link is `paid`; `GET /pay/:code/status` shows the payment with explorer URL.
 5. Send a second payment with the same memo → ignored (link not open), logged.
+6. Send less than the quoted amount to a fresh link → link goes `underpaid`, `shortfallUSDC` shown; send the remainder with the same memo → link completes to `paid`.
+7. Send more than the quoted amount → link `paid`, `GET /me` shows the excess under `unallocatedUSDC`.
 
 ### 1.8 Tests
-Unit: code generator, quote rounding, matcher (`match(op, tx, link)` pure function with fixtures for wrong asset, wrong memo, underpay, overpay). E2e: auth + links happy path against test DB.
+Unit: code generator, quote rounding, matcher (`match(op, link, cfg)` pure function with fixtures for wrong asset, wrong memo, underpay, overpay, and a top-up on an already-`underpaid` link). E2e: auth + links happy path against test DB.
 
 ---
 
@@ -149,7 +153,7 @@ interface AnchorAdapter {
 - **Sep24AnchorAdapter** (skeleton, real wiring on Day 1 after Workshop #3): fetch `https://{ANCHOR_HOME_DOMAIN}/.well-known/stellar.toml`, read `TRANSFER_SERVER_SEP0024`, SEP-10 auth with platform key, `POST /transactions/withdraw/interactive` for USDC, then send USDC to the anchor's returned address with the returned memo, poll `GET /transaction?id=`. Implement against `testanchor.stellar.org` so the code path is exercised even before a TRY anchor is known. Document every step in `docs/anchor.md`.
 
 ### 2.2 Settlements
-Listener → `payment.detected` → `SettlementsService.createFromPayment`: `amountTRY = amountUSDC * fxRate(at detection)`; `savedUSDC = amountUSDC * autoSavePercent/100` (kept in USDC; DeFindex deposit is a stretch — for now just ledger it); settle the remainder via adapter. Status `pending → processing → completed`. Balance: `availableTRY = Σ completed settlements − Σ non-failed withdrawals`, `pendingTRY = Σ pending/processing`.
+Listener → `payment.detected` → `SettlementsService.createFromPayment`: **`amountTRY = link.amountTRY`** (locked at creation; `fxRate = link.fxRate`, never recomputed from `receivedUSDC`); `savedUSDC = link.quotedUSDC * autoSavePercent/100` (kept in USDC; DeFindex deposit is a stretch — for now just ledger it, and reduce `amountTRY` proportionally); settle the remainder via adapter. Status `pending → processing → completed`. Balance: `availableTRY = Σ completed settlements − Σ non-failed withdrawals`, `pendingTRY = Σ pending/processing`, `unallocatedUSDC = merchant.unallocatedUSDC` (from overpaid links, see §1.6 — never folded into `availableTRY`).
 
 ### 2.3 Withdrawals
 `POST /withdrawals`: require `iban` (body or merchant profile), `amountTRY ≤ availableTRY` else 422. Mock adapter completes after delay. List endpoint.
@@ -164,7 +168,7 @@ Listener → `payment.detected` → `SettlementsService.createFromPayment`: `amo
 - Seed script: one demo merchant (`demo@liralink.app / demo1234`), 3 links (one paid with a real testnet tx), realistic Mersin-exporter data.
 
 ### 2.6 Verification
-Full loop from a fresh DB: register → link → pay from Stellar Lab → `/balance.availableTRY` grows after mock delay → withdrawal reduces it. Both frontends connected with `VITE_USE_MOCK=false`.
+Full loop from a fresh DB: register → link → pay from Stellar Lab → `/balance.availableTRY` = `link.amountTRY` exactly, grows after mock delay → withdrawal reduces it. Underpay (top-up completes it) and overpay (excess lands in `unallocatedUSDC`) cases verified. Both frontends connected with `VITE_USE_MOCK=false`.
 
 ---
 
@@ -180,7 +184,7 @@ Record every skill file path used (e.g. `skills/anchors/SKILL.md`) in `docs/skil
 ## Definition of done (backend)
 
 - `/health` green on EC2 from the internet, listener `running`.
-- A real testnet USDC payment with memo flips a link to `paid` in < 10 s and credits TRY.
+- A real testnet USDC payment with memo flips a link to `paid` in < 10 s and credits exactly `link.amountTRY`; underpay and overpay cases behave per the exact-amount policy (§1.6, §2.2).
 - Swagger accurate; `docs/api.types.ts` exported for the frontends.
 - Seed data loads with one command.
 - README: run locally in 5 commands; architecture diagram; custody/regulatory note; roadmap (per-merchant smart accounts, real TRY anchor, x402, DeFindex).

@@ -4,6 +4,7 @@ import { explorerTxUrl } from '../../common/explorer';
 export class PaymentResponseDto {
   id: string;
   linkId: string;
+  rail: string;
   txHash: string;
   payerAddress: string;
   amountUSDC: string;
@@ -15,6 +16,7 @@ export class PaymentResponseDto {
     const dto = new PaymentResponseDto();
     dto.id = payment.id;
     dto.linkId = payment.linkId;
+    dto.rail = payment.rail;
     dto.txHash = payment.txHash;
     dto.payerAddress = payment.payerAddress;
     dto.amountUSDC = payment.amountUSDC.toFixed(7);

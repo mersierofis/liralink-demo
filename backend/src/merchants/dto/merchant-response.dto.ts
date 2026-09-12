@@ -6,6 +6,7 @@ export class MerchantResponseDto {
   businessName: string;
   iban?: string;
   autoSavePercent: number;
+  unallocatedUSDC: string;
   createdAt: string;
 
   static fromEntity(merchant: Merchant): MerchantResponseDto {
@@ -15,6 +16,7 @@ export class MerchantResponseDto {
     dto.businessName = merchant.businessName;
     dto.iban = merchant.iban ?? undefined;
     dto.autoSavePercent = merchant.autoSavePercent;
+    dto.unallocatedUSDC = merchant.unallocatedUSDC.toFixed(7);
     dto.createdAt = merchant.createdAt.toISOString();
     return dto;
   }

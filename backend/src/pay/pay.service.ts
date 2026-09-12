@@ -77,9 +77,12 @@ export class PayService {
       });
   }
 
-  async getStatus(
-    code: string,
-  ): Promise<{ status: string; payment?: PaymentResponseDto }> {
+  async getStatus(code: string): Promise<{
+    status: string;
+    receivedUSDC: string;
+    shortfallUSDC?: string;
+    payment?: PaymentResponseDto;
+  }> {
     const link = await this.prisma.paymentLink.findUnique({
       where: { code },
       include: { payment: true },
@@ -87,6 +90,8 @@ export class PayService {
     if (!link) throw new NotFoundException('Payment link not found');
     return {
       status: link.status,
+      receivedUSDC: link.receivedUSDC.toFixed(7),
+      shortfallUSDC: link.shortfallUSDC?.toFixed(7) ?? undefined,
       payment: link.payment
         ? PaymentResponseDto.fromEntity(link.payment)
         : undefined,

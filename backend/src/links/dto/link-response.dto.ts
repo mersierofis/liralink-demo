@@ -16,6 +16,8 @@ export class LinkResponseDto {
   status: string;
   expiresAt: string;
   payUrl: string;
+  receivedUSDC: string;
+  shortfallUSDC?: string;
   payment?: PaymentResponseDto;
   createdAt: string;
 
@@ -37,6 +39,8 @@ export class LinkResponseDto {
     dto.status = link.status;
     dto.expiresAt = link.expiresAt.toISOString();
     dto.payUrl = `${config.get<string>('PAY_WEB_BASE_URL')}/${link.code}`;
+    dto.receivedUSDC = link.receivedUSDC.toFixed(7);
+    dto.shortfallUSDC = link.shortfallUSDC?.toFixed(7) ?? undefined;
     dto.payment = link.payment
       ? PaymentResponseDto.fromEntity(link.payment)
       : undefined;

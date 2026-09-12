@@ -1,9 +1,10 @@
-// Generated from backend/src/**/dto/*.ts (Phase 1) — see docs/00-PROJECT.md §5 for the
-// original domain model. Settlement/Withdrawal/Balance are Phase 2 stubs: the tables exist
-// but no endpoints return them yet — kept here so both frontends can type against the
+// Generated from backend/src/**/dto/*.ts — see docs/00-PROJECT.md §5 for the domain
+// model. Settlement/Withdrawal/Balance are Phase 2 stubs: the tables exist but no
+// endpoints return them yet — kept here so both frontends can type against the
 // eventual shape without a second contract update.
 
-export type LinkStatus = 'open' | 'paid' | 'expired' | 'cancelled';
+export type LinkStatus = 'open' | 'underpaid' | 'paid' | 'expired' | 'cancelled';
+export type PayRail = 'contract' | 'memo';
 export type SettleStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type WdStatus = 'requested' | 'processing' | 'completed' | 'failed';
 
@@ -13,15 +14,19 @@ export interface Merchant {
   businessName: string;
   iban?: string;
   autoSavePercent: number;
+  // Excess USDC from overpaid links, parked here rather than auto-converted to
+  // TRY — visible to the merchant, handled manually (refund or credit, Phase 3).
+  unallocatedUSDC: string; // decimal string, 7 dp
   createdAt: string;
 }
 
 export interface Payment {
   id: string;
   linkId: string;
+  rail: PayRail; // 'contract' once the Soroban invoice contract rail exists; 'memo' today
   txHash: string;
   payerAddress: string;
-  amountUSDC: string; // decimal string, 7 dp
+  amountUSDC: string; // decimal string, 7 dp — the amount of *this* transaction, not the link total
   ledger: number;
   explorerUrl: string;
   detectedAt: string;
@@ -34,14 +39,16 @@ export interface PaymentLink {
   merchantName: string;
   title: string;
   description?: string;
-  amountTRY: string; // decimal string, 2 dp
-  quotedUSDC: string; // decimal string, 7 dp
+  amountTRY: string; // decimal string, 2 dp — locked at creation; settlement always credits this, never receivedUSDC * fxRate
+  quotedUSDC: string; // decimal string, 7 dp — locked at creation
   fxRate: string; // TRY per 1 USDC at quote time, 7 dp
   quoteExpiresAt: string;
   status: LinkStatus;
   expiresAt: string;
   payUrl: string;
-  payment?: Payment; // present when paid
+  receivedUSDC: string; // decimal string, 7 dp — cumulative USDC matched so far ("0" until first payment)
+  shortfallUSDC?: string; // decimal string, 7 dp — set only while status is 'underpaid'
+  payment?: Payment; // present when paid — the completing transaction (partial top-ups are logged server-side, not exposed per-tx)
   createdAt: string;
 }
 
@@ -78,9 +85,10 @@ export interface Balance {
   availableTRY: string;
   pendingTRY: string;
   savedUSDC: string;
+  unallocatedUSDC: string;
 }
 
-/** What GET /pay/:code and GET /pay/:code/status return — the payer page's whole data model. */
+/** What GET /pay/:code returns — the payer page's whole data model. */
 export interface PayQuote {
   code: string;
   merchantName: string;
@@ -92,10 +100,24 @@ export interface PayQuote {
   quoteExpiresAt: string;
   status: LinkStatus;
   expiresAt: string;
-  destination: string; // platform collection account (G...)
-  memo: string; // = code
+  receivedUSDC: string;
+  shortfallUSDC?: string;
+  rails: {
+    // absent until the Soroban invoice contract is deployed (see 00-PROJECT.md §7)
+    contract?: { contractId: string; invoiceCode: string };
+    // the only rail implemented so far — classic payment with a text memo
+    memo?: { destination: string; memo: string };
+  };
   asset: { code: string; issuer: string };
   network: 'testnet';
+  payment?: Payment;
+}
+
+/** What GET /pay/:code/status returns — polled every 2s by the payer page. */
+export interface PayStatus {
+  status: LinkStatus;
+  receivedUSDC: string;
+  shortfallUSDC?: string;
   payment?: Payment;
 }
 

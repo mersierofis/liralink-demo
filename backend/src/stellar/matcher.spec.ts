@@ -37,6 +37,7 @@ const openLink: LinkForMatch = {
   code: 'K7Q2M9XA',
   status: 'open',
   quotedUSDC: new Decimal('10.0000000'),
+  receivedUSDC: new Decimal('0'),
 };
 
 describe('decodeMemoCode', () => {
@@ -48,24 +49,71 @@ describe('decodeMemoCode', () => {
 });
 
 describe('match', () => {
-  it('matches an exact payment as paid', () => {
+  it('matches an exact payment as paid with no excess', () => {
     expect(match(baseOp(), openLink, cfg)).toEqual({
       kind: 'paid',
       amountUSDC: new Decimal('10.0000000'),
+      totalReceivedUSDC: new Decimal('10.0000000'),
+      excessUSDC: new Decimal('0'),
     });
   });
 
-  it('matches an overpayment as paid', () => {
+  it('matches an overpayment as paid and reports the excess', () => {
     const result = match(baseOp({ amount: '15.0000000' }), openLink, cfg);
     expect(result).toEqual({
       kind: 'paid',
       amountUSDC: new Decimal('15.0000000'),
+      totalReceivedUSDC: new Decimal('15.0000000'),
+      excessUSDC: new Decimal('5.0000000'),
     });
   });
 
-  it('flags an underpayment without marking the link paid', () => {
+  it('flags an underpayment without marking the link paid, reporting the shortfall', () => {
     const result = match(baseOp({ amount: '9.9999999' }), openLink, cfg);
-    expect(result.kind).toBe('underpaid');
+    expect(result).toEqual({
+      kind: 'underpaid',
+      amountUSDC: new Decimal('9.9999999'),
+      totalReceivedUSDC: new Decimal('9.9999999'),
+      shortfallUSDC: new Decimal('0.0000001'),
+    });
+  });
+
+  it('accepts a top-up payment on an already-underpaid link and reaches paid', () => {
+    const partiallyPaidLink: LinkForMatch = {
+      ...openLink,
+      status: 'underpaid',
+      receivedUSDC: new Decimal('6.0000000'),
+    };
+    const result = match(
+      baseOp({ amount: '4.0000000' }),
+      partiallyPaidLink,
+      cfg,
+    );
+    expect(result).toEqual({
+      kind: 'paid',
+      amountUSDC: new Decimal('4.0000000'),
+      totalReceivedUSDC: new Decimal('10.0000000'),
+      excessUSDC: new Decimal('0'),
+    });
+  });
+
+  it('keeps an underpaid link underpaid on a second partial top-up', () => {
+    const partiallyPaidLink: LinkForMatch = {
+      ...openLink,
+      status: 'underpaid',
+      receivedUSDC: new Decimal('6.0000000'),
+    };
+    const result = match(
+      baseOp({ amount: '2.0000000' }),
+      partiallyPaidLink,
+      cfg,
+    );
+    expect(result).toEqual({
+      kind: 'underpaid',
+      amountUSDC: new Decimal('2.0000000'),
+      totalReceivedUSDC: new Decimal('8.0000000'),
+      shortfallUSDC: new Decimal('2.0000000'),
+    });
   });
 
   it('ignores a failed transaction', () => {

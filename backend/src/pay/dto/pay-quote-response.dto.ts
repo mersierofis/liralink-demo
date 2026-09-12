@@ -2,6 +2,16 @@ import { ConfigService } from '@nestjs/config';
 import { Payment, PaymentLink } from '../../generated/prisma/client';
 import { PaymentResponseDto } from '../../payments/dto/payment-response.dto';
 
+interface ContractRail {
+  contractId: string;
+  invoiceCode: string;
+}
+
+interface MemoRail {
+  destination: string;
+  memo: string;
+}
+
 export class PayQuoteResponseDto {
   code: string;
   merchantName: string;
@@ -13,8 +23,11 @@ export class PayQuoteResponseDto {
   quoteExpiresAt: string;
   status: string;
   expiresAt: string;
-  destination: string;
-  memo: string;
+  receivedUSDC: string;
+  shortfallUSDC?: string;
+  // `contract` stays absent until the Soroban invoice contract is deployed;
+  // `memo` (classic text-memo payment) is the only rail implemented so far.
+  rails: { contract?: ContractRail; memo?: MemoRail };
   asset: { code: string; issuer: string };
   network: 'testnet';
   payment?: PaymentResponseDto;
@@ -38,8 +51,9 @@ export class PayQuoteResponseDto {
     dto.quoteExpiresAt = link.quoteExpiresAt.toISOString();
     dto.status = link.status;
     dto.expiresAt = link.expiresAt.toISOString();
-    dto.destination = platformPublicKey;
-    dto.memo = link.code;
+    dto.receivedUSDC = link.receivedUSDC.toFixed(7);
+    dto.shortfallUSDC = link.shortfallUSDC?.toFixed(7) ?? undefined;
+    dto.rails = { memo: { destination: platformPublicKey, memo: link.code } };
     dto.asset = {
       code: config.get<string>('USDC_CODE')!,
       issuer: config.get<string>('USDC_ISSUER')!,

@@ -23,8 +23,11 @@ export class PaymentsService {
 
   async recordPayment(
     linkId: string,
+    merchantId: string,
     op: InboundOp,
     amountUSDC: Decimal,
+    totalReceivedUSDC: Decimal,
+    excessUSDC: Decimal,
     ledger: number,
   ): Promise<Payment> {
     const payment = await this.prisma.$transaction(async (tx) => {
@@ -34,24 +37,58 @@ export class PaymentsService {
           txHash: op.txHash,
           payerAddress: op.from,
           amountUSDC,
+          rail: 'memo',
           ledger,
         },
       });
       await tx.paymentLink.update({
         where: { id: linkId },
-        data: { status: 'paid' },
+        data: {
+          status: 'paid',
+          receivedUSDC: totalReceivedUSDC,
+          shortfallUSDC: null,
+        },
       });
+      if (excessUSDC.greaterThan(0)) {
+        await tx.merchant.update({
+          where: { id: merchantId },
+          data: { unallocatedUSDC: { increment: excessUSDC } },
+        });
+      }
       return payment;
     });
 
     this.logger.log(
-      `Payment detected: link ${linkId}, tx ${op.txHash}, ${amountUSDC.toFixed(7)} USDC`,
+      `Payment detected: link ${linkId}, tx ${op.txHash}, ${amountUSDC.toFixed(7)} USDC` +
+        (excessUSDC.greaterThan(0)
+          ? ` (${excessUSDC.toFixed(7)} USDC overpaid → merchant.unallocatedUSDC)`
+          : ''),
     );
     this.events.emit(PAYMENT_DETECTED_EVENT, {
       payment,
       linkId,
     } satisfies PaymentDetectedEvent);
     return payment;
+  }
+
+  /** Partial payment: link stays open for a top-up, nothing settles yet. */
+  async recordUnderpayment(
+    linkId: string,
+    totalReceivedUSDC: Decimal,
+    shortfallUSDC: Decimal,
+  ): Promise<void> {
+    await this.prisma.paymentLink.update({
+      where: { id: linkId },
+      data: {
+        status: 'underpaid',
+        receivedUSDC: totalReceivedUSDC,
+        shortfallUSDC,
+      },
+    });
+    this.logger.warn(
+      `Link ${linkId} underpaid: received ${totalReceivedUSDC.toFixed(7)} USDC, ` +
+        `shortfall ${shortfallUSDC.toFixed(7)} USDC`,
+    );
   }
 
   async recordAttempt(
