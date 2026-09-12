@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { QrCode, X } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -40,8 +41,16 @@ export function LinksTable({ links, onShowQr }: { links: PaymentLink[]; onShowQr
       <TableBody>
         {links.map((link) => (
           <TableRow key={link.id}>
-            <TableCell className="font-mono text-xs">{link.code}</TableCell>
-            <TableCell className="max-w-[220px] truncate">{link.title}</TableCell>
+            <TableCell className="font-mono text-xs">
+              <Link to={`/links/${link.id}`} className="hover:underline">
+                {link.code}
+              </Link>
+            </TableCell>
+            <TableCell className="max-w-[220px] truncate">
+              <Link to={`/links/${link.id}`} className="hover:underline">
+                {link.title}
+              </Link>
+            </TableCell>
             <TableCell>{formatTRY(link.amountTRY)}</TableCell>
             <TableCell title={`${link.quotedUSDC} USDC`}>
               {link.status === 'underpaid' ? (

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
 
 import { apiRequest } from './client'
 import type { AuthResult, LinkStatus, Merchant, Paginated, PaymentLink } from './types'
@@ -55,7 +55,10 @@ export function useLinks(filters: LinksFilter = {}) {
   })
 }
 
-export function useLink(id: string | undefined, opts: { refetchInterval?: number } = {}) {
+export function useLink(
+  id: string | undefined,
+  opts: { refetchInterval?: UseQueryOptions<PaymentLink>['refetchInterval'] } = {},
+) {
   return useQuery({
     queryKey: ['links', id],
     queryFn: () => apiRequest<PaymentLink>(`/links/${id}`),

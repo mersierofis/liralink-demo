@@ -8,6 +8,7 @@ import LoginPage from '@/pages/Login'
 import RegisterPage from '@/pages/Register'
 import DashboardPage from '@/pages/Dashboard'
 import LinksPage from '@/pages/Links'
+import LinkDetailPage from '@/pages/LinkDetail'
 import PaymentsPage from '@/pages/Payments'
 import WithdrawalsPage from '@/pages/Withdrawals'
 import SettingsPage from '@/pages/Settings'
@@ -27,6 +28,7 @@ export default function App() {
                   <Routes>
                     <Route path="/" element={<DashboardPage />} />
                     <Route path="/links" element={<LinksPage />} />
+                    <Route path="/links/:id" element={<LinkDetailPage />} />
                     <Route path="/payments" element={<PaymentsPage />} />
                     <Route path="/withdrawals" element={<WithdrawalsPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
