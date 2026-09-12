@@ -11,7 +11,9 @@ import { LinksModule } from './links/links.module';
 import { MerchantsModule } from './merchants/merchants.module';
 import { PayModule } from './pay/pay.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { SettlementsModule } from './settlements/settlements.module';
 import { StellarModule } from './stellar/stellar.module';
+import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { StellarModule } from './stellar/stellar.module';
     StellarModule,
     HealthModule,
     PayModule,
+    SettlementsModule,
+    WithdrawalsModule,
   ],
 })
 export class AppModule {}

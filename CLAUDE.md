@@ -39,8 +39,8 @@ docker-compose.yml   Postgres 16 for local dev (localhost:5433)
 - **Soroban contract rail live (testnet).** `POST /links` creates the on-chain invoice best-effort
   (`onchain: null` on RPC failure; retry `POST /links/:id/onchain`) → `rails.contract` on `/pay/:code`;
   payments through `invoice.pay` are detected via RPC events (`Payment.rail = 'contract'`). Ids: `docs/deployments.md`.
-- **Backend — Phase 2 NOT built.** `/balance`, `/payments`, `/settlements`, `/withdrawals` have no
-  endpoints yet (tables/types exist). Frontends must mock these until they go live.
+- **Backend — Phase 2 money endpoints live (mock anchor).** `/balance`, `/payments`, `/settlements`,
+  `/withdrawals` — settlements run on `payment.detected` + a reconcile cron. SEP-24 anchor adapter not built yet.
 - **Frontends — not scaffolded.** Both build against MSW mock (`VITE_USE_MOCK=true`) until each backend
   phase is announced green in team chat.
 

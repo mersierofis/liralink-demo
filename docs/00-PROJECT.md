@@ -181,10 +181,12 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 | Method | Path | Response |
 |---|---|---|
 | GET | `/balance` | `Balance` (includes `unallocatedUSDC`) |
-| GET | `/payments?page=&limit=` | `{ items: (Payment & { link: Pick<PaymentLink,'code'|'title'|'amountTRY'>, settlement: Settlement })[], total }` |
-| GET | `/settlements?page=&limit=` | `{ items: Settlement[], total }` |
-| POST | `/withdrawals` | `{ amountTRY, iban? }` → `201 Withdrawal` (400 if > availableTRY) |
-| GET | `/withdrawals` | `{ items: Withdrawal[], total }` |
+| GET | `/payments?page=&limit=` | `{ items: (Payment & { link: Pick<PaymentLink,'code'|'title'|'amountTRY'>, settlement: Settlement \| null })[], total }` (newest first; `settlement` is `null` for installments that didn't complete the link) |
+| GET | `/settlements?page=&limit=` | `{ items: Settlement[], total }` (newest first) — one per paid link, created on detection, `pending → processing → completed` via the anchor |
+| POST | `/withdrawals` | `{ amountTRY, iban? }` → `201 Withdrawal` (`status: 'requested'`, amount reserved immediately). `422` if > `availableTRY`; `400` if `amountTRY` ≤ 0 or no `iban` in body or profile |
+| GET | `/withdrawals?page=&limit=` | `{ items: Withdrawal[], total }` (newest first) |
+
+Balance: `availableTRY = Σ completed settlements.amountTRY − Σ non-failed withdrawals`, `pendingTRY = Σ pending/processing settlements`, `savedUSDC = Σ savedUSDC of non-failed settlements`. A settlement credits the link's locked `amountTRY` × (100 − `autoSavePercent`)% and keeps `quotedUSDC` × `autoSavePercent`% as `savedUSDC`.
 
 ### Payer (public, no auth)
 | Method | Path | Response |

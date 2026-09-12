@@ -1,4 +1,4 @@
-# Backend → Frontend Handoff (Phase 1 green)
+# Backend → Frontend Handoff (Phase 1 + money endpoints green)
 
 > From Hasan (backend) to Yunus (`pay-web`) and Vuslat (`merchant-web`).
 > Read `00-PROJECT.md` §5/§6 first — this file only tells you **what is live right now**, the
@@ -6,10 +6,10 @@
 > Source of truth for types stays `docs/api.types.ts`. If anything here disagrees with a running
 > response, the running response wins — ping me and I'll fix the doc.
 
-**Status as of 2026-09-12:** Phase 1 endpoints are implemented and match the contract. Phase 2
-money endpoints (`/balance`, `/payments`, `/settlements`, `/withdrawals`) are **not built yet** —
-keep building those screens against your MSW mock (`VITE_USE_MOCK=true`). I'll tell the team in
-chat the day each of them goes live.
+**Status as of 2026-09-12:** Phase 1 endpoints, the Soroban contract rail, and the Phase 2
+money endpoints (`/balance`, `/payments`, `/settlements`, `/withdrawals`) are implemented and match
+the contract. The anchor is the **mock** adapter (settlements/payouts complete after ~3 s); the real
+SEP-24 anchor is next and doesn't change any shape.
 
 ---
 
@@ -34,18 +34,25 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
 | GET | `/health` | public | `HealthResponse` | both |
 | GET | `/fx` | public | `FxResponse` | both |
 
-## 2. What is NOT live yet (stay on the mock)
+## 2. Money endpoints (LIVE — Vuslat)
 
-These are Phase 2. The DB tables exist but **no endpoint returns them**, so a real call 404s:
+| Method | Path | Auth | Returns |
+|---|---|---|---|
+| GET | `/balance` | Bearer | `Balance` |
+| GET | `/payments?page=&limit=` | Bearer | `{ items: PaymentListItem[], total }` |
+| GET | `/settlements?page=&limit=` | Bearer | `{ items: Settlement[], total }` |
+| POST | `/withdrawals` | Bearer | `201 Withdrawal` (`{ amountTRY, iban? }`) |
+| GET | `/withdrawals?page=&limit=` | Bearer | `{ items: Withdrawal[], total }` |
 
-- `GET /balance`
-- `GET /payments`
-- `GET /settlements`
-- `POST /withdrawals`, `GET /withdrawals`
-
-**Vuslat:** your Dashboard balance card, Payments table, and Withdrawals screen depend on these.
-Build them fully against MSW now (shapes are frozen in `api.types.ts`: `Balance`, `Settlement`,
-`Withdrawal`). When I flip them on, only your `VITE_USE_MOCK` toggle changes — the shapes won't.
+- When a link is paid, a `Settlement` appears as `pending`/`processing` (counted in `pendingTRY`) and
+  moves to `completed` a few seconds later — only then does `availableTRY` grow. Poll `/balance`
+  every ~3 s on the dashboard while `pendingTRY !== "0.00"`.
+- A withdrawal reduces `availableTRY` **immediately** (`status: 'requested'`), then goes
+  `processing → completed`. `422` = more than `availableTRY`; `400` = no `iban` in the body and none
+  on the profile (`PATCH /me`).
+- `PaymentListItem.settlement` is `null` for installment payments that didn't complete a link.
+- `savedUSDC` / auto-save: a settlement keeps `autoSavePercent`% of the USDC and credits
+  `amountTRY` × (100 − `autoSavePercent`)%.
 
 ---
 
@@ -97,7 +104,7 @@ Build them fully against MSW now (shapes are frozen in `api.types.ts`: `Balance`
 
 7. **Status codes:** `400` validation · `401` bad/no token · `404` unknown link/code ·
    `409` invalid state transition (e.g. cancel a `paid` link) · `422` business rule
-   (e.g. withdraw > balance, once that's live). Map these in your `client.ts` `ApiError` handler;
+   (withdraw > `availableTRY`). Map these in your `client.ts` `ApiError` handler;
    Vuslat: redirect to `/login` on `401`.
 
 8. **`code` in the URL is case-insensitive** — backend upper-cases it. Codes are 8-char uppercase.
@@ -139,8 +146,8 @@ npm run start:dev             # http://localhost:3000 , Swagger at /docs
 - [ ] Copy `docs/api.types.ts` → `src/api/types.ts`.
 - [ ] **Live now:** auth, `/me`, all `/links` endpoints, link detail (poll `/links/:id` every 3 s
       while `open`). Wire these to the real API when you want.
-- [ ] **Mock only for now:** dashboard balance, `/payments`, `/withdrawals` — keep MSW until I flip
-      Phase 2 on. Shapes are frozen, so the swap is just the `VITE_USE_MOCK` flag.
+- [ ] **Live now too:** dashboard balance, `/payments`, `/settlements`, `/withdrawals` (§2) — flip
+      `VITE_USE_MOCK=false` when ready; the shapes are the ones in `api.types.ts`.
 - [ ] `amountTRY` formatted to exactly 2 dp before `POST /links` (gotcha #3).
 - [ ] The projector demo moment: `/links/:id` flips `open → paid` live while Yunus pays.
 

@@ -1,7 +1,6 @@
 // Generated from backend/src/**/dto/*.ts — see docs/00-PROJECT.md §5 for the domain
-// model. Settlement/Withdrawal/Balance are Phase 2 stubs: the tables exist but no
-// endpoints return them yet — kept here so both frontends can type against the
-// eventual shape without a second contract update.
+// model. Every type below is returned by a live endpoint (Settlement/Withdrawal/Balance
+// went live with phase 2 part D).
 
 export type LinkStatus = 'open' | 'underpaid' | 'paid' | 'expired' | 'cancelled';
 export type PayRail = 'contract' | 'memo';
@@ -56,7 +55,6 @@ export interface PaymentLink {
   createdAt: string;
 }
 
-/** Phase 2 stub — no endpoint returns this yet. */
 export interface Settlement {
   id: string;
   merchantId: string;
@@ -72,7 +70,6 @@ export interface Settlement {
   completedAt?: string;
 }
 
-/** Phase 2 stub — no endpoint returns this yet. */
 export interface Withdrawal {
   id: string;
   merchantId: string;
@@ -84,7 +81,6 @@ export interface Withdrawal {
   completedAt?: string;
 }
 
-/** Phase 2 stub — no endpoint returns this yet. */
 export interface Balance {
   availableTRY: string;
   pendingTRY: string;
@@ -131,6 +127,13 @@ export interface ApiError {
   statusCode: number;
   message: string;
   error?: string;
+}
+
+/** One row of GET /payments — every transfer, newest first. `settlement` is null for
+ * installments that didn't complete their link (only the completing payment settles). */
+export interface PaymentListItem extends Payment {
+  link: Pick<PaymentLink, 'code' | 'title' | 'amountTRY'>;
+  settlement: Settlement | null;
 }
 
 // ---- Paginated list envelopes, as returned by GET /links and GET /payments ----
