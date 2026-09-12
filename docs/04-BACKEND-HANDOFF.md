@@ -22,7 +22,7 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
 | POST | `/auth/register` | – | `201 { token, merchant }` | Vuslat |
 | POST | `/auth/login` | – | `200 { token, merchant }` | Vuslat |
 | GET | `/me` | Bearer | `Merchant` | Vuslat |
-| PATCH | `/me` | Bearer | `Merchant` (`{ businessName?, iban?, autoSavePercent? }`) | Vuslat |
+| PATCH | `/me` | Bearer | `Merchant` (`{ businessName?, iban?, autoSavePercent?, currentPassword?, newPassword? }`) | Vuslat |
 | POST | `/links` | Bearer | `201 PaymentLink` | Vuslat |
 | GET | `/links?status=&page=&limit=` | Bearer | `{ items: PaymentLink[], total }` (newest first) | Vuslat |
 | GET | `/links/:id` | Bearer | `PaymentLink` | Vuslat |
@@ -110,7 +110,8 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
    `cancelled`). The `/submitted` POST is only a fire-and-forget hint to speed detection up —
    detection works without it, so don't block the UI on its response.
 
-7. **Status codes:** `400` validation · `401` bad/no token · `404` unknown link/code ·
+7. **Status codes:** `400` validation · `401` bad/no token · `403` wrong `currentPassword` on a
+   password change (inline error — do **not** log out) · `404` unknown link/code ·
    `409` invalid state transition (e.g. cancel a `paid` link, or `POST /withdrawals` in `auto_payout`
    mode) · `422` business rule
    (withdraw > `availableTRY`). Map these in your `client.ts` `ApiError` handler;
@@ -163,6 +164,9 @@ npm run start:dev             # http://localhost:3000 , Swagger at /docs
       (the settlement's `netTRY` once `status === 'completed'`), and make the **Balance card show
       "Paid out TRY"** (`paidOutTRY`). In `'balance'` mode keep today's UI.
 - [ ] Show `netTRY` (not `amountTRY`) as the credited amount on settlements; show `feeUSDC` when `> 0`.
+- [ ] Settings: "Change password" form → `PATCH /me { currentPassword, newPassword }` (≥ 8 chars).
+      `400` if one field is missing, `403` wrong current password.
+- [ ] Demo account `demo@liralink.app` — the password is not in the repo any more: ask Hasan.
 - [ ] The projector demo moment: `/links/:id` flips `open → paid` live while Yunus pays.
 
 ---

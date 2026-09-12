@@ -5,6 +5,7 @@ import {
   Matches,
   Max,
   Min,
+  MinLength,
 } from 'class-validator';
 
 export class UpdateMerchantDto {
@@ -21,4 +22,14 @@ export class UpdateMerchantDto {
   @Min(0)
   @Max(50)
   autoSavePercent?: number;
+
+  // Password change: send both. newPassword follows the register rule (≥ 8 chars).
+  @IsOptional()
+  @IsString()
+  currentPassword?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  newPassword?: string;
 }

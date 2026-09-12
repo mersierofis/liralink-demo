@@ -14,7 +14,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { JwtPayload } from './jwt.strategy';
 
-const BCRYPT_COST = 10;
+export const BCRYPT_COST = 10;
 
 export interface AuthResult {
   token: string;

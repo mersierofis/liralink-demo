@@ -1,5 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Merchant } from '../generated/prisma/client';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import * as bcrypt from 'bcryptjs';
+import { BCRYPT_COST } from '../auth/auth.service';
+import { Merchant, Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateMerchantDto } from './dto/update-merchant.dto';
 
@@ -13,7 +20,29 @@ export class MerchantsService {
     return merchant;
   }
 
+  /** Profile fields, plus an optional password change: `newPassword` needs the right
+   * `currentPassword`. Wrong password is 403, not 401 — clients log out on 401. */
   async update(id: string, dto: UpdateMerchantDto): Promise<Merchant> {
-    return this.prisma.merchant.update({ where: { id }, data: dto });
+    const { currentPassword, newPassword, ...profile } = dto;
+    const data: Prisma.MerchantUpdateInput = { ...profile };
+
+    if (currentPassword !== undefined || newPassword !== undefined) {
+      if (!currentPassword || !newPassword) {
+        throw new BadRequestException(
+          'currentPassword and newPassword must be sent together',
+        );
+      }
+      const merchant = await this.findByIdOrThrow(id);
+      const matches = await bcrypt.compare(
+        currentPassword,
+        merchant.passwordHash,
+      );
+      if (!matches) {
+        throw new ForbiddenException('currentPassword is incorrect');
+      }
+      data.passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
+    }
+
+    return this.prisma.merchant.update({ where: { id }, data });
   }
 }

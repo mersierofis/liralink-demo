@@ -104,4 +104,35 @@ describe('Auth + Merchants (e2e)', () => {
       .send({ iban: 'not-an-iban' })
       .expect(400);
   });
+
+  it('changes the password on PATCH /me only with the right currentPassword', async () => {
+    const newPassword = 'rotated-pass-1';
+    const patch = (body: object) =>
+      request(app.getHttpServer())
+        .patch('/api/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send(body);
+    const login = (pw: string) =>
+      request(app.getHttpServer())
+        .post('/api/auth/login')
+        .send({ email, password: pw });
+
+    await patch({ newPassword }).expect(400);
+    await patch({ currentPassword: password }).expect(400);
+    await patch({ currentPassword: 'wrong-password', newPassword }).expect(403);
+    await patch({ currentPassword: password, newPassword: 'short' }).expect(
+      400,
+    );
+    await login(password).expect(200); // nothing changed so far
+
+    const res = await patch({ currentPassword: password, newPassword }).expect(
+      200,
+    );
+    expect(res.body.email).toBe(email);
+    expect(res.body.passwordHash).toBeUndefined();
+    expect(res.body.newPassword).toBeUndefined();
+
+    await login(password).expect(401);
+    await login(newPassword).expect(200);
+  });
 });

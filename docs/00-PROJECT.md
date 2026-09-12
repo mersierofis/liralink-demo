@@ -171,7 +171,7 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 | POST | `/auth/register` | `{ email, password, businessName }` → `201 { token, merchant }` |
 | POST | `/auth/login` | `{ email, password }` → `200 { token, merchant }` |
 | GET | `/me` | → `Merchant` (incl. `settlementMode`) |
-| PATCH | `/me` | `{ businessName?, iban?, autoSavePercent? }` → `Merchant` |
+| PATCH | `/me` | `{ businessName?, iban?, autoSavePercent?, currentPassword?, newPassword? }` → `Merchant` — change the password by sending both (`newPassword` ≥ 8 chars); `400` if only one is sent, `403` if `currentPassword` is wrong |
 
 ### Payment links (merchant)
 | Method | Path | Body → Response |
@@ -207,7 +207,7 @@ Balance: `availableTRY = Σ netTRY of completed balance-mode (mock) settlements 
 | GET | `/fx` | `{ pair: 'USDC/TRY', rate: '34.00', source: 'mock'|'live', fetchedAt }` |
 
 ### Status codes
-`200/201/202` success · `400` validation · `401` no/invalid token · `404` unknown link/code · `409` invalid state transition (e.g. cancel a paid link) or not allowed in this settlement mode (`POST /withdrawals` when `auto_payout`) · `422` business rule (insufficient balance).
+`200/201/202` success · `400` validation · `401` no/invalid token · `403` wrong `currentPassword` on `PATCH /me` · `404` unknown link/code · `409` invalid state transition (e.g. cancel a paid link) or not allowed in this settlement mode (`POST /withdrawals` when `auto_payout`) · `422` business rule (insufficient balance).
 
 ## 7. Soroban invoice contract (phase 2, Hasan — required; frontends get an optional second pay button)
 
