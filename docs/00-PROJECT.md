@@ -26,7 +26,7 @@ A Turkish merchant or exporter creates a **payment link** for an amount in Turki
 | Integration with an eligible Stellar protocol | **Stellar Wallets Kit** (payer wallet connect), **Soroswap** (stretch: pay with any asset → USDC) |
 | Anchor / local payments (real TRY rail) | USDC → TRY via anchor (SEP-24 withdraw). Adapter pattern: `mock` for dev/demo, real TRY anchor wired after Workshop #3 on Day 1 |
 | Core feature is load-bearing | The whole product *is* the payment + settlement flow |
-| Soroban SDK + contract on testnet | Phase 3 in backend: `invoice` Soroban contract (see §7). Core flow works without it |
+| Soroban SDK + contract on testnet | **Phase 2** in backend: `invoice` Soroban contract (see §7) — **required deliverable**. The memo rail remains the fallback demo path |
 | Stretch: agentic payments | Same link payable by an AI agent via **x402** (Workshop #1) |
 
 Judges track: shipped core integration, shipped anchor integration, real traction, real users onboarded. **Bring at least one real merchant from Mersin as a named pilot user.**
@@ -61,7 +61,7 @@ liralink/
   backend/         ← NestJS (Hasan)
   merchant-web/    ← React + Vite (Vuslat)
   pay-web/         ← React + Vite PWA (Yunus)
-  contracts/       ← Soroban invoice contract (Hasan, phase 3)
+  contracts/       ← Soroban invoice contract (Hasan, phase 2 — required)
   docker-compose.yml
 ```
 Each app has its own `package.json`. No shared workspace tooling needed; a copy of `docs/api.types.ts` (generated from backend DTOs) is committed for the two frontends.
@@ -77,7 +77,7 @@ Each app has its own `package.json`. No shared workspace tooling needed; a copy 
 
 ```ts
 type LinkStatus   = 'open' | 'underpaid' | 'paid' | 'expired' | 'cancelled';
-type PayRail      = 'contract' | 'memo';       // 'contract' reserved for the Soroban invoice rail (phase 3, not yet built)
+type PayRail      = 'contract' | 'memo';       // 'contract' reserved for the Soroban invoice rail (phase 2, not yet built)
 type SettleStatus = 'pending' | 'processing' | 'completed' | 'failed';
 type WdStatus     = 'requested' | 'processing' | 'completed' | 'failed';
 
@@ -198,9 +198,9 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 ### Status codes
 `200/201/202` success · `400` validation · `401` no/invalid token · `404` unknown link/code · `409` invalid state transition (e.g. cancel a paid link) · `422` business rule (insufficient balance).
 
-## 7. Soroban invoice contract (phase 3, Hasan — not required by frontends)
+## 7. Soroban invoice contract (phase 2, Hasan — required; frontends get an optional second pay button)
 
-`contracts/invoice` — records invoices on-chain so a payer can pay *through* the contract using the USDC Stellar Asset Contract. Functions: `create(merchant: Address, code: Symbol, amount: i128, deadline: u32)`, `pay(code: Symbol, payer: Address)` (calls `token.transfer(payer → merchant)` with `payer.require_auth()`), `get(code) -> Invoice`, `cancel(code)` (merchant auth). If done in time, the payer page gets a second "Pay via contract" button; if not, the classic memo rail is the demo. Do not block on this.
+`contracts/invoice` — records invoices on-chain so a payer can pay *through* the contract using the USDC Stellar Asset Contract. Functions: `create(merchant: Address, code: Symbol, amount: i128, deadline: u32)`, `pay(code: Symbol, payer: Address)` (calls `token.transfer(payer → merchant)` with `payer.require_auth()`), `get(code) -> Invoice`, `cancel(code)` (merchant auth). This is a **required phase-2 deliverable**. The payer page gets a second "Pay via contract" button; the classic memo rail stays as the fallback so the live demo never depends on the contract.
 
 ## 8. Conventions (all apps)
 
@@ -225,7 +225,7 @@ Backend-only pins (`merchant-web` and `pay-web` unaffected): NestJS **11.2.3** (
 | When | Backend (Hasan) | Merchant web (Vuslat) | Pay web (Yunus) |
 |---|---|---|---|
 | Sat 13 – Sun 14 | Phase 1: auth, links, quote, Horizon listener, mock anchor | Scaffold + mock + Auth/Links screens | Scaffold + Wallets Kit connect working with Freighter on testnet |
-| Mon 15 – Wed 17 | Phase 2: settlement, balance, withdrawals, SEP-24 adapter skeleton, deploy to EC2 | Balance/Payments/Withdrawals screens; connect to real API | Full pay flow against real API; real USDC payment on testnet |
+| Mon 15 – Wed 17 | Phase 2: settlement, balance, withdrawals, SEP-24 adapter skeleton, **Soroban invoice contract on testnet**, deploy to EC2 | Balance/Payments/Withdrawals screens; connect to real API | Full pay flow against real API; real USDC payment on testnet |
 | Thu 18 | Freeze features. Dry-run demo twice. Pitch deck (Vuslat) | | |
 | Day 1 (Fri 19) | Workshops → wire real TRY anchor; x402 stretch | Polish; pilot merchant data | Polish; phone demo rehearsal |
-| Day 2 (Sat 20) | Submit by 12:00; contract stretch only if everything else is green | | |
+| Day 2 (Sat 20) | Submit by 12:00; contract already landed in phase 2 — final QA only | | |

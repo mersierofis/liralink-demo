@@ -28,7 +28,7 @@ docs/            product + per-app specs + api.types.ts (source of truth)
 backend/         NestJS API (Hasan)                — see backend/README.md to run
 merchant-web/    React + Vite, desktop (Vuslat)    — not scaffolded yet
 pay-web/         React + Vite PWA, mobile (Yunus)  — not scaffolded yet
-contracts/       Soroban invoice contract (phase 3, optional)
+contracts/       Soroban invoice contract (phase 2 — required)
 docker-compose.yml   Postgres 16 for local dev (localhost:5433)
 ```
 
