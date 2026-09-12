@@ -1,0 +1,143 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum LinkStatus {
+  open
+  paid
+  expired
+  cancelled
+}
+
+enum SettleStatus {
+  pending
+  processing
+  completed
+  failed
+}
+
+enum WdStatus {
+  requested
+  processing
+  completed
+  failed
+}
+
+model Merchant {
+  id              String   @id @default(uuid())
+  email           String   @unique
+  passwordHash    String
+  businessName    String
+  iban            String?
+  autoSavePercent Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  links       PaymentLink[]
+  settlements Settlement[]
+  withdrawals Withdrawal[]
+}
+
+model PaymentLink {
+  id             String     @id @default(uuid())
+  code           String     @unique
+  merchantId     String
+  merchant       Merchant   @relation(fields: [merchantId], references: [id])
+  title          String
+  description    String?
+  amountTRY      Decimal    @db.Decimal(20, 7)
+  quotedUSDC     Decimal    @db.Decimal(20, 7)
+  fxRate         Decimal    @db.Decimal(20, 7)
+  quoteExpiresAt DateTime
+  status         LinkStatus @default(open)
+  expiresAt      DateTime
+  createdAt      DateTime   @default(now())
+
+  payment Payment?
+
+  @@index([code])
+  @@index([merchantId, createdAt])
+}
+
+model Payment {
+  id           String      @id @default(uuid())
+  linkId       String      @unique
+  link         PaymentLink @relation(fields: [linkId], references: [id])
+  txHash       String      @unique
+  payerAddress String
+  amountUSDC   Decimal     @db.Decimal(20, 7)
+  ledger       Int
+  detectedAt   DateTime    @default(now())
+
+  settlement Settlement?
+}
+
+model Settlement {
+  id          String       @id @default(uuid())
+  merchantId  String
+  merchant    Merchant     @relation(fields: [merchantId], references: [id])
+  paymentId   String       @unique
+  payment     Payment      @relation(fields: [paymentId], references: [id])
+  amountUSDC  Decimal      @db.Decimal(20, 7)
+  amountTRY   Decimal      @db.Decimal(20, 7)
+  fxRate      Decimal      @db.Decimal(20, 7)
+  savedUSDC   Decimal      @default(0) @db.Decimal(20, 7)
+  provider    String
+  status      SettleStatus @default(pending)
+  anchorRef   String?
+  createdAt   DateTime     @default(now())
+  completedAt DateTime?
+}
+
+model Withdrawal {
+  id          String    @id @default(uuid())
+  merchantId  String
+  merchant    Merchant  @relation(fields: [merchantId], references: [id])
+  amountTRY   Decimal   @db.Decimal(20, 7)
+  iban        String
+  status      WdStatus  @default(requested)
+  anchorRef   String?
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+}
+
+// Idempotency for the Horizon payment listener — one row per processed operation id.
+model ProcessedOperation {
+  opId        String   @id
+  processedAt DateTime @default(now())
+}
+
+// Single-row table persisting the Horizon payments-stream paging token,
+// so a listener restart resumes instead of skipping or replaying from scratch.
+model ListenerCursor {
+  id          String   @id @default("horizon-payments")
+  pagingToken String
+  updatedAt   DateTime @updatedAt
+}
+
+// Inbound Horizon operations that matched the platform account/asset but were
+// not credited as a Payment (underpaid, unmatched code, wrong state, etc.) —
+// kept for support/debugging rather than silently dropped.
+model PaymentAttempt {
+  id         String   @id @default(uuid())
+  opId       String   @unique
+  // Decoded memo, kept as plain text (NOT a foreign key) — an attempt with a
+  // memo matching no real link at all is exactly one of the cases this table
+  // exists to capture, so it can't be constrained to an existing PaymentLink.code.
+  linkCode   String?
+  txHash     String
+  fromAddr   String
+  amountUSDC Decimal  @db.Decimal(20, 7)
+  assetCode  String
+  reason     String
+  createdAt  DateTime @default(now())
+}

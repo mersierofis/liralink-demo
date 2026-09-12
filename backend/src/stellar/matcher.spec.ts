@@ -1,0 +1,154 @@
+import { Decimal } from '../common/decimal';
+import {
+  decodeMemoCode,
+  InboundOp,
+  LinkForMatch,
+  match,
+  MatchConfig,
+} from './matcher';
+
+const PLATFORM = 'GDC2I5BUJ5KVYUZGZCXCE3S5SPWB7WW722SGENCBYJ7VYFGPYT4Z7OSE';
+const ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+
+const cfg: MatchConfig = {
+  platformAddress: PLATFORM,
+  assetCode: 'USDC',
+  assetIssuer: ISSUER,
+};
+
+function baseOp(overrides: Partial<InboundOp> = {}): InboundOp {
+  return {
+    opId: '19867887351111681',
+    txHash: '0334cd305019c8a73db6562d1c5f6351f4eead1220b100383b7d022683619d5d',
+    from: 'GAVQ7574Q3PNOZNIMDODRZHR7A64VHPCR5TQL2R7VQEWJFMTPQFY5CNM',
+    to: PLATFORM,
+    assetType: 'credit_alphanum4',
+    assetCode: 'USDC',
+    assetIssuer: ISSUER,
+    amount: '10.0000000',
+    memoType: 'text',
+    memoBytes: Buffer.from('K7Q2M9XA', 'utf8').toString('base64'),
+    successful: true,
+    ...overrides,
+  };
+}
+
+const openLink: LinkForMatch = {
+  code: 'K7Q2M9XA',
+  status: 'open',
+  quotedUSDC: new Decimal('10.0000000'),
+};
+
+describe('decodeMemoCode', () => {
+  it('decodes base64 back to the uppercase code, trimmed', () => {
+    expect(
+      decodeMemoCode(Buffer.from('k7q2m9xa ', 'utf8').toString('base64')),
+    ).toBe('K7Q2M9XA');
+  });
+});
+
+describe('match', () => {
+  it('matches an exact payment as paid', () => {
+    expect(match(baseOp(), openLink, cfg)).toEqual({
+      kind: 'paid',
+      amountUSDC: new Decimal('10.0000000'),
+    });
+  });
+
+  it('matches an overpayment as paid', () => {
+    const result = match(baseOp({ amount: '15.0000000' }), openLink, cfg);
+    expect(result).toEqual({
+      kind: 'paid',
+      amountUSDC: new Decimal('15.0000000'),
+    });
+  });
+
+  it('flags an underpayment without marking the link paid', () => {
+    const result = match(baseOp({ amount: '9.9999999' }), openLink, cfg);
+    expect(result.kind).toBe('underpaid');
+  });
+
+  it('ignores a failed transaction', () => {
+    expect(match(baseOp({ successful: false }), openLink, cfg).kind).toBe(
+      'ignored',
+    );
+  });
+
+  it('ignores a payment to the wrong destination', () => {
+    const result = match(baseOp({ to: 'GSOMEOTHERACCOUNT' }), openLink, cfg);
+    expect(result).toEqual({ kind: 'ignored', reason: 'wrong destination' });
+  });
+
+  it('ignores the wrong asset code', () => {
+    const result = match(baseOp({ assetCode: 'FAKEUSDC' }), openLink, cfg);
+    expect(result).toEqual({ kind: 'ignored', reason: 'wrong asset' });
+  });
+
+  it('ignores a correctly-coded asset from the wrong issuer (anyone can issue "USDC")', () => {
+    const result = match(
+      baseOp({ assetIssuer: 'GSOMERANDOMISSUER' }),
+      openLink,
+      cfg,
+    );
+    expect(result).toEqual({ kind: 'ignored', reason: 'wrong asset' });
+  });
+
+  it('ignores a native XLM payment (no asset_code/issuer)', () => {
+    const result = match(
+      baseOp({
+        assetType: 'native',
+        assetCode: undefined,
+        assetIssuer: undefined,
+      }),
+      openLink,
+      cfg,
+    );
+    expect(result).toEqual({ kind: 'ignored', reason: 'wrong asset' });
+  });
+
+  it('ignores a missing memo', () => {
+    const result = match(
+      baseOp({ memoType: 'none', memoBytes: undefined }),
+      openLink,
+      cfg,
+    );
+    expect(result).toEqual({
+      kind: 'ignored',
+      reason: 'missing or non-text memo',
+    });
+  });
+
+  it('ignores a non-text memo type (id/hash/return)', () => {
+    const result = match(baseOp({ memoType: 'hash' }), openLink, cfg);
+    expect(result).toEqual({
+      kind: 'ignored',
+      reason: 'missing or non-text memo',
+    });
+  });
+
+  it('ignores a memo matching no link at all', () => {
+    const result = match(baseOp(), null, cfg);
+    expect(result).toEqual({
+      kind: 'ignored',
+      reason: 'no matching link for memo',
+    });
+  });
+
+  it('ignores a payment to an already-paid link', () => {
+    const result = match(baseOp(), { ...openLink, status: 'paid' }, cfg);
+    expect(result).toEqual({
+      kind: 'ignored',
+      reason: 'link status is "paid"',
+    });
+  });
+
+  it('ignores a payment to an expired link', () => {
+    const result = match(baseOp(), { ...openLink, status: 'expired' }, cfg);
+    expect(result.kind).toBe('ignored');
+  });
+
+  it('ignores a payment to a cancelled link', () => {
+    const result = match(baseOp(), { ...openLink, status: 'cancelled' }, cfg);
+    expect(result.kind).toBe('ignored');
+  });
+});

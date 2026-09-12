@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: liralink
+      POSTGRES_PASSWORD: liralink
+      POSTGRES_DB: liralink
+    ports:
+      - "5433:5432"   # 5432 is already taken by a system Postgres on this machine
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
