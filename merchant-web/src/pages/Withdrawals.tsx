@@ -23,19 +23,26 @@ export default function WithdrawalsPage() {
         {balance.data && <WithdrawDialog availableTRY={balance.data.availableTRY} defaultIban={merchant?.iban} />}
       </div>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardDescription>Available to withdraw</CardDescription>
-          {balance.isLoading ? (
-            <Skeleton className="h-9 w-40" />
-          ) : (
-            <CardTitle className="text-3xl">{formatTRY(balance.data?.availableTRY ?? '0.00')}</CardTitle>
-          )}
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">Pending: {formatTRY(balance.data?.pendingTRY ?? '0.00')}</p>
-        </CardContent>
-      </Card>
+      {balance.isError ? (
+        <ErrorState
+          message={balance.error instanceof HttpError ? balance.error.message : 'Could not load your balance.'}
+          onRetry={() => balance.refetch()}
+        />
+      ) : (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Available to withdraw</CardDescription>
+            {balance.isLoading ? (
+              <Skeleton className="h-9 w-40" />
+            ) : (
+              <CardTitle className="text-3xl">{formatTRY(balance.data?.availableTRY ?? '0.00')}</CardTitle>
+            )}
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">Pending: {formatTRY(balance.data?.pendingTRY ?? '0.00')}</p>
+          </CardContent>
+        </Card>
+      )}
 
       <div>
         <h2 className="mb-3 text-lg font-medium">History</h2>

@@ -42,7 +42,14 @@ export default function DashboardPage() {
 
       <div className="grid gap-4 md:grid-cols-3">
         <div className="md:col-span-2">
-          <BalanceCard balance={balance.data} isLoading={balance.isLoading} />
+          {balance.isError ? (
+            <ErrorState
+              message={balance.error instanceof HttpError ? balance.error.message : 'Could not load your balance.'}
+              onRetry={() => balance.refetch()}
+            />
+          ) : (
+            <BalanceCard balance={balance.data} isLoading={balance.isLoading} />
+          )}
         </div>
         <Card>
           <CardHeader className="pb-2">
@@ -50,11 +57,11 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="flex gap-6">
             <div>
-              <p className="text-2xl font-semibold">{openThisWeek}</p>
+              <p className="text-2xl font-semibold">{links.isLoading ? '—' : openThisWeek}</p>
               <p className="text-xs text-muted-foreground">Open links</p>
             </div>
             <div>
-              <p className="text-2xl font-semibold">{paidThisWeek}</p>
+              <p className="text-2xl font-semibold">{links.isLoading ? '—' : paidThisWeek}</p>
               <p className="text-xs text-muted-foreground">Paid links</p>
             </div>
           </CardContent>
