@@ -165,7 +165,7 @@ Listener → `payment.detected` → `SettlementsService.createFromPayment`: **`a
 - Dockerfile (multi-stage), `docker-compose.yml` with Postgres for EC2.
 - GitHub Action: lint/typecheck/test on PR; on `main` build image (optional push).
 - EC2: run under Docker, nginx reverse proxy with TLS (certbot) on `api.<domain>`; CORS for the two web apps' domains. `/health` must be green from the internet.
-- Seed script: one demo merchant (`demo@liralink.app / demo1234`), 3 links (one paid with a real testnet tx), realistic Mersin-exporter data.
+- Seed script: one demo merchant (`demo@liralink.app`; password from `SEED_DEMO_PASSWORD` in `backend/.env` — ask Hasan), 3 links (one paid with a real testnet tx), realistic Mersin-exporter data.
 
 ### 2.6 Verification
 Full loop from a fresh DB: register → link → pay from Stellar Lab → `/balance.availableTRY` = `link.amountTRY` exactly, grows after mock delay → withdrawal reduces it. Underpay (top-up completes it) and overpay (excess lands in `unallocatedUSDC`) cases verified. Both frontends connected with `VITE_USE_MOCK=false`.

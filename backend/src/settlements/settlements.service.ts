@@ -6,8 +6,11 @@ import {
 } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { ANCHOR_ADAPTER, type AnchorAdapter } from '../anchor/anchor.adapter';
-import { Decimal } from '../common/decimal';
+import {
+  ANCHOR_ADAPTER,
+  ANCHOR_ADAPTERS,
+  type AnchorAdapter,
+} from '../anchor/anchor.adapter';
 import { Paginated } from '../common/dto/pagination.dto';
 import { Merchant, Settlement } from '../generated/prisma/client';
 import {
@@ -15,19 +18,24 @@ import {
   type PaymentDetectedEvent,
 } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { splitSettlement } from './settlement-math';
+import { netSettlementTRY, splitSettlement } from './settlement-math';
 
-// A pending/processing settlement older than this was interrupted (process restart) — re-run it.
+// A pending/processing mock settlement older than this was interrupted (process restart) — re-run it.
 const STUCK_AFTER_MS = 5 * 60_000;
 
 @Injectable()
 export class SettlementsService implements OnApplicationBootstrap {
   private readonly logger = new Logger(SettlementsService.name);
   private reconciling = false;
+  // Settlements with an adapter call in flight in this process — never run one twice at once
+  // (the SEP-24 adapter must not build two payments for the same settlement).
+  private readonly running = new Set<string>();
 
   constructor(
     private readonly prisma: PrismaService,
     @Inject(ANCHOR_ADAPTER) private readonly anchor: AnchorAdapter,
+    @Inject(ANCHOR_ADAPTERS)
+    private readonly adapters: Record<string, AnchorAdapter>,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -85,45 +93,104 @@ export class SettlementsService implements OnApplicationBootstrap {
       `Settlement ${settlement.id} created for link ${link.code}: ${amounts.amountTRY.toFixed(2)} TRY ` +
         `(${amounts.amountUSDC.toFixed(7)} USDC to anchor, ${amounts.savedUSDC.toFixed(7)} USDC saved)`,
     );
-    await this.run(settlement.id, amounts.amountUSDC, link.merchant);
+    await this.run(settlement, link.merchant);
   }
 
-  private async run(
-    settlementId: string,
-    amountUSDC: Decimal,
-    merchant: Merchant,
-  ): Promise<void> {
-    await this.prisma.settlement.update({
-      where: { id: settlementId },
-      data: { status: 'processing' },
-    });
-    try {
-      const { ref } = await this.anchor.settleToTRY({
-        settlementId,
-        amountUSDC,
-        merchant,
-      });
-      await this.prisma.settlement.update({
-        where: { id: settlementId },
-        data: { status: 'completed', anchorRef: ref, completedAt: new Date() },
-      });
-      this.logger.log(`Settlement ${settlementId} completed (${ref})`);
-    } catch (err) {
-      await this.prisma.settlement.update({
-        where: { id: settlementId },
-        data: { status: 'failed' },
-      });
+  /** Starts or resumes a settlement on the provider it was created with. */
+  private async run(settlement: Settlement, merchant: Merchant): Promise<void> {
+    const { id } = settlement;
+    if (this.running.has(id)) return;
+    const adapter = this.adapters[settlement.provider];
+    if (!adapter) {
       this.logger.error(
-        `Settlement ${settlementId} failed`,
+        `Settlement ${id}: provider "${settlement.provider}" is not available`,
+      );
+      return;
+    }
+    this.running.add(id);
+    try {
+      if (settlement.status === 'pending' && !settlement.blockedReason) {
+        await this.prisma.settlement.update({
+          where: { id },
+          data: { status: 'processing' },
+        });
+      }
+      const result = await adapter.settleToTRY({
+        settlement,
+        merchant,
+        save: async (patch) => {
+          await this.prisma.settlement.update({ where: { id }, data: patch });
+        },
+      });
+      switch (result.status) {
+        case 'completed': {
+          const netTRY = netSettlementTRY(
+            settlement.amountTRY,
+            settlement.amountUSDC,
+            result.feeUSDC,
+          );
+          await this.prisma.settlement.update({
+            where: { id },
+            data: {
+              status: 'completed',
+              anchorRef: result.ref,
+              blockedReason: null,
+              feeUSDC: result.feeUSDC,
+              netTRY,
+              completedAt: new Date(),
+            },
+          });
+          this.logger.log(
+            `Settlement ${id} completed (${result.ref}): ${netTRY.toFixed(2)} TRY net of a ${result.feeUSDC.toFixed(7)} USDC fee`,
+          );
+          break;
+        }
+        case 'processing':
+          await this.prisma.settlement.update({
+            where: { id },
+            data: {
+              status: 'processing',
+              anchorRef: result.ref,
+              blockedReason: null,
+            },
+          });
+          break;
+        case 'blocked':
+          await this.prisma.settlement.update({
+            where: { id },
+            data: { status: 'pending', blockedReason: result.reason },
+          });
+          if (settlement.blockedReason !== result.reason) {
+            this.logger.warn(
+              `Settlement ${id} blocked (${result.reason}): ${result.detail} — retried every minute`,
+            );
+          }
+          break;
+        case 'failed':
+          await this.prisma.settlement.update({
+            where: { id },
+            data: { status: 'failed', anchorRef: result.ref },
+          });
+          this.logger.error(`Settlement ${id} failed: ${result.reason}`);
+          break;
+      }
+    } catch (err) {
+      // Transient (network, Horizon, anchor 5xx): the settlement stays where it is and the minute
+      // job resumes it. Adapters persist progress before irreversible steps, so retrying is safe.
+      this.logger.error(
+        `Settlement ${id} attempt failed, will retry`,
         err instanceof Error ? err.stack : String(err),
       );
+    } finally {
+      this.running.delete(id);
     }
   }
 
   /**
    * Safety net for missed `payment.detected` events (a restart between detection and
    * settlement, or links paid before settlements existed): settles every paid link that has
-   * no settlement yet, via its completing (latest) payment, and re-runs interrupted ones.
+   * no settlement yet, via its completing (latest) payment. Then resumes unfinished settlements:
+   * interrupted mock runs, and every SEP-24 one (waiting on KYC or the anchor, or blocked).
    */
   @Cron(CronExpression.EVERY_MINUTE)
   async reconcile(): Promise<void> {
@@ -142,16 +209,22 @@ export class SettlementsService implements OnApplicationBootstrap {
         await this.settlePayment(link.payments[0].id);
       }
 
-      const stuck = await this.prisma.settlement.findMany({
+      const unfinished = await this.prisma.settlement.findMany({
         where: {
           status: { in: ['pending', 'processing'] },
-          createdAt: { lt: new Date(Date.now() - STUCK_AFTER_MS) },
+          OR: [
+            { provider: { not: 'mock' } },
+            { createdAt: { lt: new Date(Date.now() - STUCK_AFTER_MS) } },
+          ],
         },
         include: { merchant: true },
+        orderBy: { createdAt: 'asc' },
       });
-      for (const s of stuck) {
-        this.logger.warn(`Re-running interrupted settlement ${s.id}`);
-        await this.run(s.id, s.amountUSDC, s.merchant);
+      for (const s of unfinished) {
+        if (s.provider === 'mock') {
+          this.logger.warn(`Re-running interrupted settlement ${s.id}`);
+        }
+        await this.run(s, s.merchant);
       }
     } catch (err) {
       this.logger.error(

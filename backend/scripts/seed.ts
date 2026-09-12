@@ -4,7 +4,9 @@
  * Usage:
  *   npm run seed            (also runs on `npx prisma migrate reset`)
  *
- * Demo login: demo@liralink.app / demo1234 ("Erdemli Narenciye A.Ş.").
+ * Demo login: demo@liralink.app ("Erdemli Narenciye A.Ş."). The password comes from
+ * SEED_DEMO_PASSWORD in backend/.env — never committed, never printed (ask Hasan). Re-running with
+ * a new value rotates it.
  *
  * Which merchant becomes the demo account, in order:
  *   1. the merchant already registered as demo@liralink.app (upsert by email);
@@ -28,13 +30,13 @@ dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
 const DEMO = {
   email: 'demo@liralink.app',
-  password: 'demo1234',
   businessName: 'Erdemli Narenciye A.Ş.',
   iban: 'TR330006100519786457841326',
 };
 
-// Same cost as AuthService, so seeded and registered hashes are indistinguishable.
+// Same cost and minimum length as AuthService / RegisterDto.
 const BCRYPT_COST = 10;
+const MIN_PASSWORD_LENGTH = 8;
 
 // Links paid with real testnet USDC on 2026-09-12 (memo rail).
 const REAL_LINK_CODES = ['VHHCJ8QZ', 'WNWCMGXA', 'WPQRQDT4'];
@@ -133,6 +135,12 @@ async function createLink(
 }
 
 async function main() {
+  const demoPassword = requireEnv('SEED_DEMO_PASSWORD');
+  if (demoPassword.length < MIN_PASSWORD_LENGTH) {
+    throw new Error(
+      `SEED_DEMO_PASSWORD must be at least ${MIN_PASSWORD_LENGTH} characters`,
+    );
+  }
   const prisma = new PrismaClient({
     adapter: new PrismaPg({ connectionString: requireEnv('DATABASE_URL') }),
   });
@@ -144,7 +152,7 @@ async function main() {
     if (found) {
       const { merchant, via } = found;
       const passwordMatches = await bcrypt.compare(
-        DEMO.password,
+        demoPassword,
         merchant.passwordHash,
       );
       await prisma.merchant.update({
@@ -155,16 +163,16 @@ async function main() {
           iban: DEMO.iban,
           ...(passwordMatches
             ? {}
-            : { passwordHash: await bcrypt.hash(DEMO.password, BCRYPT_COST) }),
+            : { passwordHash: await bcrypt.hash(demoPassword, BCRYPT_COST) }),
         },
       });
       merchantId = merchant.id;
       console.log(
-        `Updated merchant ${merchant.id} (${via}; was ${merchant.email})`,
+        `Updated merchant ${merchant.id} (${via}; was ${merchant.email}; password ${passwordMatches ? 'unchanged' : 'set from SEED_DEMO_PASSWORD'})`,
       );
     } else {
       const rate = new Decimal(requireEnv('FX_MOCK_RATE_TRY_PER_USDC'));
-      const passwordHash = await bcrypt.hash(DEMO.password, BCRYPT_COST);
+      const passwordHash = await bcrypt.hash(demoPassword, BCRYPT_COST);
       merchantId = await prisma.$transaction(async (tx) => {
         const merchant = await tx.merchant.create({
           data: {
@@ -189,7 +197,7 @@ async function main() {
       include: { links: { include: { payments: true } } },
     });
     console.log(
-      `Demo login: ${DEMO.email} / ${DEMO.password} — ${summary.businessName}, unallocatedUSDC ${summary.unallocatedUSDC.toFixed(7)}`,
+      `Demo login: ${DEMO.email} (password: SEED_DEMO_PASSWORD in backend/.env) — ${summary.businessName}, unallocatedUSDC ${summary.unallocatedUSDC.toFixed(7)}`,
     );
     for (const link of summary.links) {
       const hashes = link.payments.map((p) => p.txHash).join(', ') || '—';

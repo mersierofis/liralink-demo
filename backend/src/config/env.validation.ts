@@ -26,6 +26,9 @@ export const envSchema = z.object({
 
   ANCHOR_PROVIDER: z.enum(['mock', 'sep24']).default('mock'),
   ANCHOR_HOME_DOMAIN: z.string().optional().default(''),
+  // testanchor.stellar.org only: its reference server, where the interactive KYC form posts — the
+  // backend fills that form in itself. Empty (real anchors): the merchant completes interactiveUrl.
+  ANCHOR_SEP24_TEST_KYC_URL: z.string().optional().default(''),
   ANCHOR_MOCK_DELAY_MS: z.coerce.number().int().nonnegative().default(3000),
 
   LINK_DEFAULT_EXPIRY_HOURS: z.coerce.number().positive().default(24),
