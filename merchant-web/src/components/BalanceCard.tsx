@@ -51,8 +51,9 @@ export function BalanceCard({
         )}
         {savedUSDC > 0 && (
           <div>
-            <p className="text-muted-foreground">Saved (USDC)</p>
+            <p className="text-muted-foreground">Held in USD (USDC)</p>
             <p className="font-medium">{formatUSDC(balance.savedUSDC)}</p>
+            <p className="text-xs text-muted-foreground">Held by LiraLink until you request a transfer</p>
           </div>
         )}
         {unallocatedUSDC > 0 && (

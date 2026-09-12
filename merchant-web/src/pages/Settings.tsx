@@ -109,7 +109,7 @@ export default function SettingsPage() {
                 name="autoSavePercent"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Auto-save {field.value}%</FormLabel>
+                    <FormLabel>Keep in USD ({field.value}%)</FormLabel>
                     <FormControl>
                       <Slider
                         min={0}
@@ -119,7 +119,16 @@ export default function SettingsPage() {
                         onValueChange={([v]) => field.onChange(v)}
                       />
                     </FormControl>
-                    <FormDescription>Keep part of every payment in USDC instead of converting it all to TRY.</FormDescription>
+                    <FormDescription>
+                      Keep this share of each payment in USDC instead of converting to TRY. Protects
+                      against lira depreciation.
+                    </FormDescription>
+                    {field.value > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Held by LiraLink until you request a transfer — sending USDC to your own
+                        wallet is coming soon.
+                      </p>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
