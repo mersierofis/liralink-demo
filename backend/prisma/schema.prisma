@@ -138,6 +138,9 @@ model Settlement {
   // Why a `pending` settlement can't proceed yet (outside_anchor_limits | missing_iban |
   // anchor_withdraw_disabled); the minute job retries it.
   blockedReason  String?
+  // Why a `failed` settlement failed — terminal, never retried (unexpected_fee_asset |
+  // invalid_fee | anchor_status | amount_mismatch). Null on every other status.
+  failReason     String?
   // USDC payment platform → anchor. The signed XDR is persisted BEFORE submitting, so a retry
   // resubmits the same transaction instead of sending the USDC twice.
   anchorTxHash   String?

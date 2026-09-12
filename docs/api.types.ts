@@ -9,6 +9,15 @@ export type WdStatus = 'requested' | 'processing' | 'completed' | 'failed';
 // 'balance': TRY accrues in availableTRY and the merchant withdraws (mock anchor).
 // 'auto_payout': the anchor pays the IBAN during settlement; POST /withdrawals → 409 (sep24 anchor).
 export type SettlementMode = 'balance' | 'auto_payout';
+// Why a settlement is 'failed' — terminal, never retried:
+// unexpected_fee_asset: the anchor reported its fee in an asset other than our USDC;
+// invalid_fee: fee < 0 or > amountUSDC; anchor_status: the anchor ended the transaction as
+// error/expired/refunded/…; amount_mismatch: the anchor expected another amount (nothing sent).
+export type SettleFailReason =
+  | 'unexpected_fee_asset'
+  | 'invalid_fee'
+  | 'anchor_status'
+  | 'amount_mismatch';
 
 export interface Merchant {
   id: string;
@@ -72,6 +81,7 @@ export interface Settlement {
   provider: 'mock' | 'sep24';
   status: SettleStatus;
   anchorRef?: string;
+  failReason: SettleFailReason | null; // set only when status is 'failed'
   createdAt: string;
   completedAt?: string;
 }

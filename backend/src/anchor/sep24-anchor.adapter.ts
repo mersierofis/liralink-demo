@@ -106,10 +106,14 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
           const usdcAsset = `stellar:${this.usdc.getCode()}:${this.usdc.getIssuer()}`;
           const feeUSDC = sep24FeeUSDC(txn, usdcAsset);
           if (!feeUSDC) {
-            // Stays processing and is retried — crediting the gross would overstate the payout.
-            throw new Error(
-              `withdraw ${ref}: fee is not in ${usdcAsset} (${JSON.stringify(txn.fee_details ?? txn.amount_fee_asset)})`,
-            );
+            // The anchor paid out, but a fee in another asset can't be netted against the USDC.
+            // Terminal: crediting the gross would overstate the payout, and a retry changes nothing.
+            return {
+              status: 'failed',
+              ref,
+              reason: 'unexpected_fee_asset',
+              detail: `withdraw ${ref} completed with its fee in ${JSON.stringify(txn.fee_details ?? { amount_fee: txn.amount_fee, amount_fee_asset: txn.amount_fee_asset })}, not ${usdcAsset}`,
+            };
           }
           return { status: 'completed', ref, feeUSDC };
         }
@@ -117,7 +121,8 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
           return {
             status: 'failed',
             ref,
-            reason: `anchor transaction ${txn.status}${txn.message ? `: ${txn.message}` : ''}`,
+            reason: 'anchor_status',
+            detail: `anchor transaction ${txn.status}${txn.message ? `: ${txn.message}` : ''}`,
           };
         case 'interactive':
           if (!this.testKycUrl) {
@@ -261,7 +266,8 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
       return {
         status: 'failed',
         ref: txn.id,
-        reason: `anchor expects ${txn.amount_in} USDC, settlement is ${state.amountUSDC.toFixed(7)} — nothing sent`,
+        reason: 'amount_mismatch',
+        detail: `anchor expects ${txn.amount_in} USDC, settlement is ${state.amountUSDC.toFixed(7)} — nothing sent`,
       };
     }
 

@@ -81,6 +81,7 @@ type PayRail      = 'contract' | 'memo';       // 'contract' reserved for the So
 type SettleStatus = 'pending' | 'processing' | 'completed' | 'failed';
 type WdStatus     = 'requested' | 'processing' | 'completed' | 'failed';
 type SettlementMode = 'balance' | 'auto_payout'; // balance: TRY accrues, merchant withdraws (mock anchor) · auto_payout: the anchor pays the IBAN at settlement (sep24)
+type SettleFailReason = 'unexpected_fee_asset' | 'invalid_fee' | 'anchor_status' | 'amount_mismatch'; // why a settlement is 'failed' — terminal, never retried
 
 interface Merchant {
   id: string; email: string; businessName: string;
@@ -130,6 +131,7 @@ interface Settlement {
   netTRY: string | null;         // TRY credited (balance) or paid to the IBAN (auto_payout), 2 dp — null until completed
   provider: 'mock' | 'sep24';
   status: SettleStatus; anchorRef?: string;
+  failReason: SettleFailReason | null; // set only when status is 'failed' (see docs/anchor.md)
   createdAt: string; completedAt?: string;
 }
 
