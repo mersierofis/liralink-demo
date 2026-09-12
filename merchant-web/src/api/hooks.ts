@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiRequest } from './client'
-import type { AuthResult, Merchant } from './types'
+import type { AuthResult, LinkStatus, Merchant, Paginated, PaymentLink } from './types'
 
 export function useMe(enabled: boolean) {
   return useQuery({
@@ -32,6 +32,56 @@ export function useUpdateMe() {
       apiRequest<Merchant>('/me', { method: 'PATCH', body }),
     onSuccess: (merchant) => {
       queryClient.setQueryData(['me'], merchant)
+    },
+  })
+}
+
+export interface LinksFilter {
+  status?: LinkStatus | 'all'
+  page?: number
+  limit?: number
+}
+
+export function useLinks(filters: LinksFilter = {}) {
+  const params = new URLSearchParams()
+  if (filters.status && filters.status !== 'all') params.set('status', filters.status)
+  if (filters.page) params.set('page', String(filters.page))
+  if (filters.limit) params.set('limit', String(filters.limit))
+  const qs = params.toString()
+
+  return useQuery({
+    queryKey: ['links', filters],
+    queryFn: () => apiRequest<Paginated<PaymentLink>>(`/links${qs ? `?${qs}` : ''}`),
+  })
+}
+
+export function useLink(id: string | undefined, opts: { refetchInterval?: number } = {}) {
+  return useQuery({
+    queryKey: ['links', id],
+    queryFn: () => apiRequest<PaymentLink>(`/links/${id}`),
+    enabled: !!id,
+    refetchInterval: opts.refetchInterval,
+  })
+}
+
+export function useCreateLink() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { title: string; description?: string; amountTRY: string; expiresInHours?: number }) =>
+      apiRequest<PaymentLink>('/links', { method: 'POST', body }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['links'] })
+    },
+  })
+}
+
+export function useCancelLink() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => apiRequest<PaymentLink>(`/links/${id}/cancel`, { method: 'POST' }),
+    onSuccess: (link) => {
+      queryClient.invalidateQueries({ queryKey: ['links'] })
+      queryClient.setQueryData(['links', link.id], link)
     },
   })
 }
