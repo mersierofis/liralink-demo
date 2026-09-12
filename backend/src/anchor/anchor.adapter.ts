@@ -46,10 +46,21 @@ export type SettleResult =
   | { status: 'processing'; ref: string }
   /** Can't start yet (nothing sent); stays `pending` with this reason and is retried. */
   | { status: 'blocked'; reason: BlockedReason; detail: string }
-  | { status: 'failed'; ref?: string; reason: string };
+  /** Terminal — never retried. `detail` goes to the ERROR log. */
+  | {
+      status: 'failed';
+      ref?: string;
+      reason: SettleFailReason;
+      detail: string;
+    };
 
 export type BlockedReason =
   'outside_anchor_limits' | 'missing_iban' | 'anchor_withdraw_disabled';
+
+/** Settlement.failReason (docs/anchor.md). The adapter reports all but `invalid_fee`, which
+ * SettlementsService sets when the reported fee can't be netted. */
+export type SettleFailReason =
+  'unexpected_fee_asset' | 'invalid_fee' | 'anchor_status' | 'amount_mismatch';
 
 /** USDC → TRY settlement and TRY payout to an IBAN (docs/anchor.md). */
 export interface AnchorAdapter {

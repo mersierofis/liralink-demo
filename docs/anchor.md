@@ -52,7 +52,7 @@ auto-save).
      `{ amount, name, surname, email, bank, account: <IBAN> }`.
 6. **Send the USDC.** When `GET {TRANSFER_SERVER_SEP0024}/transaction?id=` shows
    `pending_user_transfer_start`, the adapter checks `amount_in` equals the settlement amount
-   (else the settlement fails — nothing sent), then builds a payment platform →
+   (else the settlement fails with `failReason: 'amount_mismatch'` — nothing sent), then builds a payment platform →
    `withdraw_anchor_account` with `withdraw_memo` typed by `withdraw_memo_type` (`id` | `text` |
    `hash`, base64), 300 s time bound.
    **Double-spend guard:** the signed XDR and hash are saved (`anchorTxXdr`, `anchorTxHash`)
@@ -64,8 +64,10 @@ auto-save).
    `pending_external` … → `processing`. `completed` → settlement `completed`, with `feeUSDC` from the
    anchor's `fee_details` (else `amount_fee`) and `netTRY` = `amountTRY` × (`amountUSDC` − fee) /
    `amountUSDC`, rounded down; it counts toward `paidOutTRY` (the anchor paid the IBAN). A fee in any
-   asset other than our USDC keeps the settlement `processing` with a logged error.
-   `error` / `expired` / `refunded` / `no_market` / `too_small` / `too_large` → settlement `failed`.
+   asset other than our USDC → settlement `failed` with `failReason: 'unexpected_fee_asset'`, logged at
+   ERROR and not retried (the anchor already paid out — reconcile by hand). A fee below 0 or above
+   `amountUSDC` → `failed` / `invalid_fee`, same handling.
+   `error` / `expired` / `refunded` / `no_market` / `too_small` / `too_large` → `failed` / `anchor_status`.
 
 One adapter call follows the anchor for up to 2 minutes (poll every 3 s), then returns
 `processing`; `SettlementsService.reconcile` (every minute, and at boot) resumes every unfinished
@@ -97,6 +99,14 @@ provider a settlement was created with, so switching `ANCHOR_PROVIDER` never mov
 - **Anchor limits vs. link sizes.** Links above the anchor's per-transaction maximum (10 USDC on
   testanchor ≈ 340 TRY at 34.00) stay `pending/outside_anchor_limits`. Splitting into several
   withdraws is not built.
+- **Failed settlements are terminal.** `failReason` says why; there is no alerting or dead-letter
+  queue yet — watch ERROR logs (`Settlement … failed`) and reconcile `unexpected_fee_asset` /
+  `invalid_fee` by hand (the anchor completed, but the fee could not be netted).
+- **Balance aggregation** (`BalanceService`, `completedNetTRY`) runs two aggregates per bucket — rows
+  with `netTRY`, plus legacy rows at gross `amountTRY`. Accepted at current scale; roadmap: a single
+  query with `COALESCE("netTRY", "amountTRY")` once settlement volume grows.
+- **`BALANCE_MODE_PROVIDERS`** (`anchor.adapter.ts`) is a hand-maintained list, today `['mock']`. A new
+  balance-mode provider must be added there, or its completed settlements land in `paidOutTRY`.
 - Single-process guard only — running two backend instances against one DB would need a DB lock
   around the payment step.
 

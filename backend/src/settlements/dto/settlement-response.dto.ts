@@ -14,6 +14,7 @@ export class SettlementResponseDto {
   provider: string;
   status: string;
   anchorRef?: string;
+  failReason: string | null; // set only when status is 'failed'
   createdAt: string;
   completedAt?: string;
 
@@ -38,6 +39,8 @@ export class SettlementResponseDto {
     dto.provider = settlement.provider;
     dto.status = settlement.status;
     dto.anchorRef = settlement.anchorRef ?? undefined;
+    dto.failReason =
+      settlement.status === 'failed' ? (settlement.failReason ?? null) : null;
     dto.createdAt = settlement.createdAt.toISOString();
     dto.completedAt = settlement.completedAt?.toISOString();
     return dto;

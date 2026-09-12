@@ -32,10 +32,14 @@ export function splitSettlement(
   return { amountUSDC: quotedUSDC.minus(savedUSDC), amountTRY, savedUSDC };
 }
 
+/** The anchor reported a fee below zero or above the settled USDC — nothing sensible to credit. */
+export class InvalidFeeError extends Error {}
+
 /**
  * TRY credited (or paid out) for a completed settlement after the anchor's fee: the gross
  * `amountTRY` scaled by the share of `amountUSDC` that reached fiat. Rounds down to kuruş —
- * never credits more than the anchor delivered.
+ * never credits more than the anchor delivered. Throws InvalidFeeError for a fee outside
+ * 0..amountUSDC.
  */
 export function netSettlementTRY(
   amountTRY: Decimal,
@@ -43,7 +47,7 @@ export function netSettlementTRY(
   feeUSDC: Decimal,
 ): Decimal {
   if (feeUSDC.isNegative() || feeUSDC.greaterThan(amountUSDC)) {
-    throw new Error(
+    throw new InvalidFeeError(
       `fee ${feeUSDC.toFixed(7)} USDC is outside 0..${amountUSDC.toFixed(7)}`,
     );
   }

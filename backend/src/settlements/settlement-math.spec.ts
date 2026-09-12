@@ -1,5 +1,9 @@
 import { Decimal } from '../common/decimal';
-import { netSettlementTRY, splitSettlement } from './settlement-math';
+import {
+  InvalidFeeError,
+  netSettlementTRY,
+  splitSettlement,
+} from './settlement-math';
 
 describe('splitSettlement', () => {
   it('credits the full locked amountTRY when auto-save is off', () => {
@@ -73,14 +77,25 @@ describe('netSettlementTRY', () => {
     ).toBe('6.66');
   });
 
-  it('rejects a fee below zero or above the settled USDC', () => {
+  it('accepts the boundaries: a zero fee and a fee equal to the settled USDC', () => {
+    const amountTRY = new Decimal('34.00');
+    const amountUSDC = new Decimal('1');
+    expect(
+      netSettlementTRY(amountTRY, amountUSDC, new Decimal(0)).toFixed(2),
+    ).toBe('34.00');
+    expect(netSettlementTRY(amountTRY, amountUSDC, amountUSDC).toFixed(2)).toBe(
+      '0.00',
+    );
+  });
+
+  it('throws InvalidFeeError for a fee below zero or above the settled USDC', () => {
     const amountTRY = new Decimal('34.00');
     const amountUSDC = new Decimal('1');
     expect(() =>
       netSettlementTRY(amountTRY, amountUSDC, new Decimal('-0.1')),
-    ).toThrow();
+    ).toThrow(InvalidFeeError);
     expect(() =>
       netSettlementTRY(amountTRY, amountUSDC, new Decimal('1.0000001')),
-    ).toThrow();
+    ).toThrow(InvalidFeeError);
   });
 });
