@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
 
 import { apiRequest } from './client'
-import type { AuthResult, Balance, LinkStatus, Merchant, Paginated, PaymentLink, PaymentListItem } from './types'
+import type { AuthResult, Balance, LinkStatus, Merchant, Paginated, PaymentLink, PaymentListItem, Withdrawal } from './types'
 
 export function useMe(enabled: boolean) {
   return useQuery({
@@ -107,5 +107,30 @@ export function usePayments(filters: { page?: number; limit?: number } = {}) {
     queryKey: ['payments', filters],
     queryFn: () => apiRequest<Paginated<PaymentListItem>>(`/payments${qs ? `?${qs}` : ''}`),
     refetchInterval: 5000,
+  })
+}
+
+export function useWithdrawals(filters: { page?: number; limit?: number } = {}) {
+  const params = new URLSearchParams()
+  if (filters.page) params.set('page', String(filters.page))
+  if (filters.limit) params.set('limit', String(filters.limit))
+  const qs = params.toString()
+
+  return useQuery({
+    queryKey: ['withdrawals', filters],
+    queryFn: () => apiRequest<Paginated<Withdrawal>>(`/withdrawals${qs ? `?${qs}` : ''}`),
+    refetchInterval: 5000,
+  })
+}
+
+export function useCreateWithdrawal() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { amountTRY: string; iban?: string }) =>
+      apiRequest<Withdrawal>('/withdrawals', { method: 'POST', body }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['withdrawals'] })
+      queryClient.invalidateQueries({ queryKey: ['balance'] })
+    },
   })
 }
