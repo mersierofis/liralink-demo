@@ -10,6 +10,7 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Input } from '@/components/ui/input'
 import { Slider } from '@/components/ui/slider'
 import { Skeleton } from '@/components/ui/skeleton'
+import { PasswordChangeCard } from '@/components/PasswordChangeCard'
 import { useAuth } from '@/auth/AuthProvider'
 import { useUpdateMe } from '@/api/hooks'
 import { HttpError } from '@/api/client'
@@ -130,6 +131,8 @@ export default function SettingsPage() {
           </Form>
         </CardContent>
       </Card>
+
+      <PasswordChangeCard />
     </div>
   )
 }

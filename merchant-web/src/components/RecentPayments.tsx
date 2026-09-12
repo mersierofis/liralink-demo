@@ -23,7 +23,11 @@ export function RecentPayments({ payments }: { payments: PaymentListItem[] }) {
               <span className="text-sm text-muted-foreground">{formatUSDC(payment.amountUSDC)}</span>
               <span className="text-sm font-medium">
                 {payment.settlement ? (
-                  formatTRY(payment.settlement.amountTRY)
+                  payment.settlement.netTRY !== null ? (
+                    formatTRY(payment.settlement.netTRY)
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )
                 ) : (
                   <span
                     className="italic text-muted-foreground"

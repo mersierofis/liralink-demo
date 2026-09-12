@@ -36,6 +36,15 @@ export function useUpdateMe() {
   })
 }
 
+/** Separate from useUpdateMe: a 403 here (wrong currentPassword) is an inline form error,
+ * never a logout — see 04-BACKEND-HANDOFF.md gotcha #7. */
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: (body: { currentPassword: string; newPassword: string }) =>
+      apiRequest<Merchant>('/me', { method: 'PATCH', body }),
+  })
+}
+
 export interface LinksFilter {
   status?: LinkStatus | 'all'
   page?: number

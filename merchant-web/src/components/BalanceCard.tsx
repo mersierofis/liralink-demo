@@ -1,9 +1,17 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatTRY, formatUSDC } from '@/lib/money'
-import type { Balance } from '@/api/types'
+import type { Balance, SettlementMode } from '@/api/types'
 
-export function BalanceCard({ balance, isLoading }: { balance: Balance | undefined; isLoading: boolean }) {
+export function BalanceCard({
+  balance,
+  isLoading,
+  settlementMode,
+}: {
+  balance: Balance | undefined
+  isLoading: boolean
+  settlementMode: SettlementMode | undefined
+}) {
   if (isLoading || !balance) {
     return (
       <Card>
@@ -15,20 +23,32 @@ export function BalanceCard({ balance, isLoading }: { balance: Balance | undefin
     )
   }
 
+  const isAutoPayout = settlementMode === 'auto_payout'
   const savedUSDC = Number(balance.savedUSDC)
   const unallocatedUSDC = Number(balance.unallocatedUSDC)
 
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardDescription>Available balance</CardDescription>
-        <CardTitle className="text-3xl">{formatTRY(balance.availableTRY)}</CardTitle>
+        <CardDescription>{isAutoPayout ? 'Paid out to your IBAN' : 'Available balance'}</CardDescription>
+        <CardTitle className="text-3xl">{formatTRY(isAutoPayout ? balance.paidOutTRY : balance.availableTRY)}</CardTitle>
+        {isAutoPayout && (
+          <p className="text-xs text-muted-foreground">
+            Your anchor pays each settlement straight to your IBAN — there's no balance to withdraw manually.
+          </p>
+        )}
       </CardHeader>
       <CardContent className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
         <div>
           <p className="text-muted-foreground">Pending</p>
           <p className="font-medium">{formatTRY(balance.pendingTRY)}</p>
         </div>
+        {!isAutoPayout && Number(balance.paidOutTRY) > 0 && (
+          <div>
+            <p className="text-muted-foreground">Paid out (auto)</p>
+            <p className="font-medium">{formatTRY(balance.paidOutTRY)}</p>
+          </div>
+        )}
         {savedUSDC > 0 && (
           <div>
             <p className="text-muted-foreground">Saved (USDC)</p>

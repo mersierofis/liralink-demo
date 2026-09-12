@@ -40,9 +40,11 @@ export const state = {
     iban: 'TR330006100519786457841326',
     autoSavePercent: 0,
     unallocatedUSDC: '0.0000000',
+    settlementMode: 'balance',
     createdAt: isoDaysAgo(30),
   } as Merchant,
 
+  password: MOCK_PASSWORD, // mutable — PATCH /me { currentPassword, newPassword } can change it
   links: [] as PaymentLink[],
   settlements: [] as Settlement[],
   withdrawals: [] as Withdrawal[],
@@ -76,6 +78,8 @@ function makePaidLink(opts: {
     amountTRY: opts.amountTRY,
     fxRate: FX_RATE,
     savedUSDC: '0.0000000',
+    feeUSDC: '0.0000000',
+    netTRY: opts.amountTRY,
     provider: 'mock',
     status: 'completed',
     anchorRef: `mock-settle-${opts.code}`,
@@ -149,8 +153,9 @@ export function computeBalance(): Balance {
   const pending = state.settlements.filter((s) => s.status === 'pending' || s.status === 'processing')
   const nonFailedWithdrawals = state.withdrawals.filter((w) => w.status !== 'failed')
 
+  // Mirrors the real backend: balances are built from netTRY (post-fee), not amountTRY.
   const availableTRY =
-    completed.reduce((sum, s) => sum + Number(s.amountTRY), 0) -
+    completed.reduce((sum, s) => sum + Number(s.netTRY ?? s.amountTRY), 0) -
     nonFailedWithdrawals.reduce((sum, w) => sum + Number(w.amountTRY), 0)
   const pendingTRY = pending.reduce((sum, s) => sum + Number(s.amountTRY), 0)
 
@@ -159,6 +164,7 @@ export function computeBalance(): Balance {
     pendingTRY: pendingTRY.toFixed(2),
     savedUSDC: '0.0000000',
     unallocatedUSDC: state.merchant.unallocatedUSDC,
+    paidOutTRY: '0.00', // mock adapter is always settlementMode 'balance', never auto_payout
   }
 }
 
@@ -198,6 +204,8 @@ export function simulatePayment(linkId: string) {
       amountTRY: current.amountTRY,
       fxRate: FX_RATE,
       savedUSDC: '0.0000000',
+      feeUSDC: null,
+      netTRY: null,
       provider: 'mock',
       status: 'pending',
       createdAt: new Date().toISOString(),
@@ -209,6 +217,8 @@ export function simulatePayment(linkId: string) {
       setTimeout(() => {
         settlement.status = 'completed'
         settlement.anchorRef = `mock-settle-${settlement.id}`
+        settlement.feeUSDC = '0.0000000'
+        settlement.netTRY = settlement.amountTRY
         settlement.completedAt = new Date().toISOString()
       }, 3000)
     }, 3000)

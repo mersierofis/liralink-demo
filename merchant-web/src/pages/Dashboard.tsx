@@ -48,7 +48,7 @@ export default function DashboardPage() {
               onRetry={() => balance.refetch()}
             />
           ) : (
-            <BalanceCard balance={balance.data} isLoading={balance.isLoading} />
+            <BalanceCard balance={balance.data} isLoading={balance.isLoading} settlementMode={merchant?.settlementMode} />
           )}
         </div>
         <Card>

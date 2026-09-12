@@ -6,7 +6,7 @@ import { ExplorerLink } from '@/components/ExplorerLink'
 import { formatTRY, formatUSDC } from '@/lib/money'
 import { formatDateTime, formatTime } from '@/lib/format'
 import { findCompletingPayment } from '@/lib/payments'
-import type { PaymentListItem } from '@/api/types'
+import type { PaymentListItem, SettlementMode } from '@/api/types'
 
 function FoldedIn({ completingPayment }: { completingPayment: PaymentListItem | undefined }) {
   const detail = completingPayment
@@ -19,7 +19,22 @@ function FoldedIn({ completingPayment }: { completingPayment: PaymentListItem | 
   )
 }
 
-export function PaymentsTable({ payments }: { payments: PaymentListItem[] }) {
+/** netTRY/feeUSDC are null until a settlement completes (they arrive together — see
+ * 04-BACKEND-HANDOFF.md §2). Distinct from `settlement === null` (an installment, handled
+ * by FoldedIn above): here a settlement exists but hasn't finished yet. */
+function CreditedAmount({ payment, completingPayment }: { payment: PaymentListItem; completingPayment: PaymentListItem | undefined }) {
+  if (!payment.settlement) return <FoldedIn completingPayment={completingPayment} />
+  if (payment.settlement.netTRY === null) return <span className="text-sm text-muted-foreground">—</span>
+  const fee = Number(payment.settlement.feeUSDC)
+  return (
+    <span title={fee > 0 ? `Anchor fee: ${formatUSDC(payment.settlement.feeUSDC!)}` : undefined}>
+      {formatTRY(payment.settlement.netTRY)}
+    </span>
+  )
+}
+
+export function PaymentsTable({ payments, settlementMode }: { payments: PaymentListItem[]; settlementMode?: SettlementMode }) {
+  const isAutoPayout = settlementMode === 'auto_payout'
   return (
     <Table>
       <TableHeader>
@@ -28,7 +43,7 @@ export function PaymentsTable({ payments }: { payments: PaymentListItem[] }) {
           <TableHead>Link</TableHead>
           <TableHead>USDC received</TableHead>
           <TableHead>FX rate</TableHead>
-          <TableHead>TRY credited</TableHead>
+          <TableHead>{isAutoPayout ? 'Paid to IBAN' : 'TRY credited'}</TableHead>
           <TableHead>Settlement</TableHead>
           <TableHead className="text-right">Tx</TableHead>
         </TableRow>
@@ -50,7 +65,7 @@ export function PaymentsTable({ payments }: { payments: PaymentListItem[] }) {
                 {payment.settlement ? Number(payment.settlement.fxRate).toFixed(2) : <FoldedIn completingPayment={completingPayment} />}
               </TableCell>
               <TableCell>
-                {payment.settlement ? formatTRY(payment.settlement.amountTRY) : <FoldedIn completingPayment={completingPayment} />}
+                <CreditedAmount payment={payment} completingPayment={completingPayment} />
               </TableCell>
               <TableCell>
                 <SettlementStatusBadge status={payment.settlement?.status ?? null} completingPayment={completingPayment} />

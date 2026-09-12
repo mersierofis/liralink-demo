@@ -1,6 +1,6 @@
 import { http, HttpResponse, type HttpHandler } from 'msw'
 
-import { MOCK_PASSWORD, MOCK_TOKEN, computeBalance, seed, simulatePayment, state } from './data'
+import { MOCK_TOKEN, computeBalance, seed, simulatePayment, state } from './data'
 import type { ApiError, LinkStatus, PaymentLink, PaymentListItem, Withdrawal } from '@/api/types'
 
 seed()
@@ -25,7 +25,7 @@ export const handlers: HttpHandler[] = [
 
   http.post('*/api/auth/login', async ({ request }) => {
     const body = (await request.json()) as { email: string; password: string }
-    if (body.email !== state.merchant.email || body.password !== MOCK_PASSWORD) {
+    if (body.email !== state.merchant.email || body.password !== state.password) {
       return error(401, 'Invalid email or password')
     }
     return HttpResponse.json({ token: MOCK_TOKEN, merchant: state.merchant })
@@ -40,7 +40,20 @@ export const handlers: HttpHandler[] = [
   http.patch('*/api/me', async ({ request }) => {
     const authError = requireAuth(request)
     if (authError) return authError
-    const body = (await request.json()) as Partial<typeof state.merchant>
+    const body = (await request.json()) as Partial<typeof state.merchant> & {
+      currentPassword?: string
+      newPassword?: string
+    }
+    if (body.currentPassword !== undefined || body.newPassword !== undefined) {
+      if (!body.currentPassword || !body.newPassword) {
+        return error(400, 'Both currentPassword and newPassword are required')
+      }
+      if (body.currentPassword !== state.password) {
+        return error(403, 'Current password is incorrect')
+      }
+      state.password = body.newPassword
+      return HttpResponse.json(state.merchant)
+    }
     state.merchant = { ...state.merchant, ...body }
     return HttpResponse.json(state.merchant)
   }),
@@ -159,6 +172,9 @@ export const handlers: HttpHandler[] = [
   http.post('*/api/withdrawals', async ({ request }) => {
     const authError = requireAuth(request)
     if (authError) return authError
+    if (state.merchant.settlementMode === 'auto_payout') {
+      return error(409, 'Payouts are automatic in this mode')
+    }
     const body = (await request.json()) as { amountTRY: string; iban?: string }
     const iban = body.iban ?? state.merchant.iban
     if (!iban) return error(400, 'No IBAN on file — set one in Settings or provide one here')

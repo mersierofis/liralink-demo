@@ -4,8 +4,10 @@ import { EmptyState } from '@/components/EmptyState'
 import { ErrorState } from '@/components/ErrorState'
 import { usePayments } from '@/api/hooks'
 import { HttpError } from '@/api/client'
+import { useAuth } from '@/auth/AuthProvider'
 
 export default function PaymentsPage() {
+  const { merchant } = useAuth()
   const { data, isLoading, isError, error, refetch } = usePayments({ limit: 50 })
 
   return (
@@ -28,7 +30,9 @@ export default function PaymentsPage() {
         <EmptyState title="No payments yet" description="Payments appear here as soon as a customer pays a link." />
       )}
 
-      {!isLoading && !isError && data && data.items.length > 0 && <PaymentsTable payments={data.items} />}
+      {!isLoading && !isError && data && data.items.length > 0 && (
+        <PaymentsTable payments={data.items} settlementMode={merchant?.settlementMode} />
+      )}
     </div>
   )
 }
