@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge'
-import type { SettleStatus } from '@/api/types'
+import { formatDateTime, formatTime } from '@/lib/format'
+import type { PaymentListItem, SettleStatus } from '@/api/types'
 
 const CONFIG: Record<SettleStatus, { label: string; variant: 'success' | 'warning' | 'secondary' | 'destructive' }> = {
   pending: { label: 'Pending', variant: 'secondary' },
@@ -11,14 +12,23 @@ const CONFIG: Record<SettleStatus, { label: string; variant: 'success' | 'warnin
 /**
  * `status` is null for an installment payment that didn't complete its link — only the
  * payment that flips the link to `paid` gets settled with the link's full amountTRY (see
- * 04-BACKEND-HANDOFF.md gotcha #5). Label it instead of showing a bare dash so it doesn't
- * read as missing data.
+ * 04-BACKEND-HANDOFF.md gotcha #5). Label it instead of showing a bare dash, and point at
+ * the specific payment it was folded into when it's known (`completingPayment`).
  */
-export function SettlementStatusBadge({ status }: { status: SettleStatus | null }) {
+export function SettlementStatusBadge({
+  status,
+  completingPayment,
+}: {
+  status: SettleStatus | null
+  completingPayment?: PaymentListItem
+}) {
   if (!status) {
+    const detail = completingPayment
+      ? `Folded into the ${formatDateTime(completingPayment.detectedAt)} payment, which completed this link`
+      : 'Partial payment towards this link — settled together with the payment that completed it'
     return (
-      <Badge variant="outline" title="Partial payment towards this link — settled together with the payment that completed it">
-        Partial payment
+      <Badge variant="outline" title={detail}>
+        {completingPayment ? `→ ${formatTime(completingPayment.detectedAt)} payment` : 'Partial payment'}
       </Badge>
     )
   }
