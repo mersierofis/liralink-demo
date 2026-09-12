@@ -17,6 +17,8 @@ export const envSchema = z.object({
   PLATFORM_ACCOUNT_SECRET: z.string().min(1),
   USDC_CODE: z.string().min(1),
   USDC_ISSUER: z.string().min(1),
+  // Empty disables the contract rail (no rails.contract, no event polling).
+  INVOICE_CONTRACT_ID: z.string().optional().default(''),
 
   FX_PROVIDER: z.enum(['mock', 'live']).default('mock'),
   FX_MOCK_RATE_TRY_PER_USDC: z.coerce.number().positive(),

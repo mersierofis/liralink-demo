@@ -25,8 +25,8 @@ export class PayQuoteResponseDto {
   expiresAt: string;
   receivedUSDC: string;
   shortfallUSDC?: string;
-  // `contract` stays absent until the Soroban invoice contract is deployed;
-  // `memo` (classic text-memo payment) is the only rail implemented so far.
+  // `memo` (classic text-memo payment) is always present; `contract` only once the merchant
+  // put the link on the current Soroban invoice contract (POST /links/:id/onchain).
   rails: { contract?: ContractRail; memo?: MemoRail };
   asset: { code: string; issuer: string };
   network: 'testnet';
@@ -56,6 +56,15 @@ export class PayQuoteResponseDto {
     dto.receivedUSDC = link.receivedUSDC.toFixed(7);
     dto.shortfallUSDC = link.shortfallUSDC?.toFixed(7) ?? undefined;
     dto.rails = { memo: { destination: platformPublicKey, memo: link.code } };
+    if (
+      link.contractId &&
+      link.contractId === config.get<string>('INVOICE_CONTRACT_ID')
+    ) {
+      dto.rails.contract = {
+        contractId: link.contractId,
+        invoiceCode: link.code,
+      };
+    }
     dto.asset = {
       code: config.get<string>('USDC_CODE')!,
       issuer: config.get<string>('USDC_ISSUER')!,

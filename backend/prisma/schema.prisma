@@ -57,25 +57,31 @@ model Merchant {
 }
 
 model PaymentLink {
-  id             String     @id @default(uuid())
-  code           String     @unique
-  merchantId     String
-  merchant       Merchant   @relation(fields: [merchantId], references: [id])
-  title          String
-  description    String?
-  amountTRY      Decimal    @db.Decimal(20, 7)
-  quotedUSDC     Decimal    @db.Decimal(20, 7)
-  fxRate         Decimal    @db.Decimal(20, 7)
-  quoteExpiresAt DateTime
-  status         LinkStatus @default(open)
-  expiresAt      DateTime
+  id                     String     @id @default(uuid())
+  code                   String     @unique
+  merchantId             String
+  merchant               Merchant   @relation(fields: [merchantId], references: [id])
+  title                  String
+  description            String?
+  amountTRY              Decimal    @db.Decimal(20, 7)
+  quotedUSDC             Decimal    @db.Decimal(20, 7)
+  fxRate                 Decimal    @db.Decimal(20, 7)
+  quoteExpiresAt         DateTime
+  status                 LinkStatus @default(open)
+  expiresAt              DateTime
   // Cumulative USDC matched to this link so far (across partial + completing
   // payments). Settlement always credits the locked `amountTRY`, never
   // `receivedUSDC * fxRate` — see PaymentsService.
-  receivedUSDC   Decimal    @default(0) @db.Decimal(20, 7)
+  receivedUSDC           Decimal    @default(0) @db.Decimal(20, 7)
   // Set only while status is `underpaid`; cleared once the link is paid.
-  shortfallUSDC  Decimal?   @db.Decimal(20, 7)
-  createdAt      DateTime   @default(now())
+  shortfallUSDC          Decimal?   @db.Decimal(20, 7)
+  // Soroban invoice rail — set by POST /links/:id/onchain. `contractId` pins the deployment
+  // holding the invoice, so a contract redeploy leaves older links off-chain again.
+  contractId             String?
+  // null when the invoice already existed on-chain (idempotent retry after a lost response)
+  contractTxHash         String?
+  contractDeadlineLedger Int?
+  createdAt              DateTime   @default(now())
 
   // One row per successful transfer that credited this link (partial installments
   // AND the completing payment) — a link can accumulate several. See PaymentsService.
@@ -94,8 +100,8 @@ model Payment {
   txHash       String      @unique
   payerAddress String
   amountUSDC   Decimal     @db.Decimal(20, 7)
-  // 'contract' once the Soroban invoice contract rail exists; 'memo' for the
-  // classic text-memo payment, the only rail implemented so far.
+  // 'memo' = classic text-memo payment (Horizon listener); 'contract' = paid through
+  // the Soroban invoice contract (InvoiceContractService, RPC getEvents).
   rail         PayRail     @default(memo)
   ledger       Int
   detectedAt   DateTime    @default(now())

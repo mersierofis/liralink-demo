@@ -107,12 +107,13 @@ interface PaymentLink {
   shortfallUSDC?: string;        // decimal string, 7 dp — set only while status is 'underpaid'
   payment?: Payment;             // most recent transfer (the completing one once paid) — alias for payments.at(-1)
   payments: Payment[];           // every successful transfer that credited this link (installments + completion), oldest→newest
+  contract?: { contractId: string; invoiceCode: string; deadlineLedger: number; txHash?: string }; // set by POST /links/:id/onchain
   createdAt: string;
 }
 
 interface Payment {
   id: string; linkId: string;
-  rail: PayRail;                 // 'memo' today — the only rail implemented
+  rail: PayRail;                 // 'memo' = classic text-memo payment; 'contract' = paid through the invoice contract
   txHash: string; payerAddress: string;
   amountUSDC: string; ledger: number;
   explorerUrl: string;
@@ -143,8 +144,8 @@ interface PayQuote {                 // what the payer page renders
   status: LinkStatus; expiresAt: string;
   receivedUSDC: string; shortfallUSDC?: string;
   rails: {
-    contract?: { contractId: string; invoiceCode: string };  // absent until the Soroban invoice contract exists
-    memo?:     { destination: string; memo: string };        // the only rail today
+    contract?: { contractId: string; invoiceCode: string };  // only after POST /links/:id/onchain
+    memo?:     { destination: string; memo: string };        // always present
   };
   asset: { code: 'USDC'; issuer: string };
   network: 'testnet';
@@ -173,7 +174,8 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 | POST | `/links` | `{ title, description?, amountTRY, expiresInHours? }` → `201 PaymentLink` |
 | GET | `/links?status=&page=&limit=` | → `{ items: PaymentLink[], total }` (newest first) |
 | GET | `/links/:id` | → `PaymentLink` |
-| POST | `/links/:id/cancel` | → `PaymentLink` (only if `open`) |
+| POST | `/links/:id/cancel` | → `PaymentLink` (only if `open`; also cancels the on-chain invoice, best-effort) |
+| POST | `/links/:id/onchain` | → `PaymentLink` with `contract` set — records the link on the Soroban invoice contract (§7) so `/pay/:code` offers `rails.contract`. Only if `open` with nothing received (`409` otherwise); a repeat call on a link already on-chain returns it unchanged; locks `quotedUSDC` until `expiresAt`; `503` if no contract is configured |
 
 ### Money (merchant)
 | Method | Path | Response |

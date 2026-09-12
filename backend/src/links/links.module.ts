@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { FxModule } from '../fx/fx.module';
+import { StellarModule } from '../stellar/stellar.module';
 import { LinksController } from './links.controller';
 import { LinksService } from './links.service';
 
 @Module({
-  imports: [AuthModule, FxModule],
+  imports: [AuthModule, FxModule, StellarModule],
   controllers: [LinksController],
   providers: [LinksService],
   exports: [LinksService],

@@ -1,9 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Decimal } from '../common/decimal';
-import { Payment } from '../generated/prisma/client';
+import { Payment, PaymentLink, PayRail } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { InboundOp } from '../stellar/matcher';
+import { InboundOp, MatchResult } from '../stellar/matcher';
 
 export const PAYMENT_DETECTED_EVENT = 'payment.detected';
 export const PAYMENT_STRAY_EVENT = 'payment.stray';
@@ -11,6 +11,15 @@ export const PAYMENT_STRAY_EVENT = 'payment.stray';
 export interface PaymentDetectedEvent {
   payment: Payment;
   linkId: string;
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    err.code === 'P2002'
+  );
 }
 
 export interface PaymentStrayEvent {
@@ -30,6 +39,61 @@ export class PaymentsService {
     private readonly events: EventEmitter2,
   ) {}
 
+  /** Returns true if this operation/event was already processed (idempotency via unique constraint). */
+  async markProcessed(opId: string): Promise<boolean> {
+    try {
+      await this.prisma.processedOperation.create({ data: { opId } });
+      return false;
+    } catch (err) {
+      if (isUniqueViolation(err)) return true;
+      throw err;
+    }
+  }
+
+  /** Routes a matcher result to the matching record* call — shared by the memo and contract rails. */
+  async recordMatch(
+    link: PaymentLink | null,
+    op: InboundOp,
+    linkCode: string | null,
+    result: MatchResult,
+    ledger: number,
+    rail: PayRail,
+  ): Promise<void> {
+    if (result.kind === 'paid') {
+      await this.recordPayment(
+        link!.id,
+        link!.merchantId,
+        op,
+        result.amountUSDC,
+        result.totalReceivedUSDC,
+        result.excessUSDC,
+        ledger,
+        rail,
+      );
+    } else if (result.kind === 'underpaid') {
+      await this.recordUnderpayment(
+        link!.id,
+        op,
+        result.amountUSDC,
+        result.totalReceivedUSDC,
+        result.shortfallUSDC,
+        ledger,
+        rail,
+      );
+    } else if (result.kind === 'stray') {
+      await this.recordStray(
+        link!.id,
+        link!.merchantId,
+        op,
+        linkCode,
+        result.amountUSDC,
+        result.reason,
+      );
+    } else {
+      await this.recordAttempt(op, linkCode, result.reason);
+    }
+  }
+
   async recordPayment(
     linkId: string,
     merchantId: string,
@@ -38,6 +102,7 @@ export class PaymentsService {
     totalReceivedUSDC: Decimal,
     excessUSDC: Decimal,
     ledger: number,
+    rail: PayRail = 'memo',
   ): Promise<Payment> {
     const payment = await this.prisma.$transaction(async (tx) => {
       const payment = await tx.payment.create({
@@ -46,7 +111,7 @@ export class PaymentsService {
           txHash: op.txHash,
           payerAddress: op.from,
           amountUSDC,
-          rail: 'memo',
+          rail,
           ledger,
         },
       });
@@ -68,7 +133,7 @@ export class PaymentsService {
     });
 
     this.logger.log(
-      `Payment detected: link ${linkId}, tx ${op.txHash}, ${amountUSDC.toFixed(7)} USDC` +
+      `Payment detected (${rail}): link ${linkId}, tx ${op.txHash}, ${amountUSDC.toFixed(7)} USDC` +
         (excessUSDC.greaterThan(0)
           ? ` (${excessUSDC.toFixed(7)} USDC overpaid → merchant.unallocatedUSDC)`
           : ''),
@@ -92,6 +157,7 @@ export class PaymentsService {
     totalReceivedUSDC: Decimal,
     shortfallUSDC: Decimal,
     ledger: number,
+    rail: PayRail = 'memo',
   ): Promise<Payment> {
     const payment = await this.prisma.$transaction(async (tx) => {
       const payment = await tx.payment.create({
@@ -100,7 +166,7 @@ export class PaymentsService {
           txHash: op.txHash,
           payerAddress: op.from,
           amountUSDC,
-          rail: 'memo',
+          rail,
           ledger,
         },
       });

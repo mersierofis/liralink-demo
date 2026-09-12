@@ -177,7 +177,9 @@ export class PaymentListenerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const alreadyProcessed = await this.markProcessed(record.id);
+    const alreadyProcessed = await this.paymentsService.markProcessed(
+      record.id,
+    );
     if (alreadyProcessed) {
       await this.advanceCursor(record.paging_token);
       return;
@@ -215,60 +217,16 @@ export class PaymentListenerService implements OnModuleInit, OnModuleDestroy {
       : null;
 
     const result = match(op, linkForMatch, this.matchConfig);
-
-    if (result.kind === 'paid') {
-      await this.paymentsService.recordPayment(
-        linkEntity!.id,
-        linkEntity!.merchantId,
-        op,
-        result.amountUSDC,
-        result.totalReceivedUSDC,
-        result.excessUSDC,
-        tx.ledger_attr,
-      );
-    } else if (result.kind === 'underpaid') {
-      await this.paymentsService.recordUnderpayment(
-        linkEntity!.id,
-        op,
-        result.amountUSDC,
-        result.totalReceivedUSDC,
-        result.shortfallUSDC,
-        tx.ledger_attr,
-      );
-    } else if (result.kind === 'stray') {
-      await this.paymentsService.recordStray(
-        linkEntity!.id,
-        linkEntity!.merchantId,
-        op,
-        linkCode,
-        result.amountUSDC,
-        result.reason,
-      );
-    } else {
-      await this.paymentsService.recordAttempt(op, linkCode, result.reason);
-    }
+    await this.paymentsService.recordMatch(
+      linkEntity,
+      op,
+      linkCode,
+      result,
+      tx.ledger_attr,
+      'memo',
+    );
 
     await this.advanceCursor(record.paging_token);
-  }
-
-  /** Returns true if this operation was already processed (idempotency check via unique constraint). */
-  private async markProcessed(opId: string): Promise<boolean> {
-    try {
-      await this.prisma.processedOperation.create({ data: { opId } });
-      return false;
-    } catch (err) {
-      if (this.isUniqueViolation(err)) return true;
-      throw err;
-    }
-  }
-
-  private isUniqueViolation(err: unknown): boolean {
-    return (
-      typeof err === 'object' &&
-      err !== null &&
-      'code' in err &&
-      err.code === 'P2002'
-    );
   }
 
   private async advanceCursor(pagingToken: string): Promise<void> {

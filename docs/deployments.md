@@ -21,7 +21,11 @@ Every on-chain deployment LiraLink depends on. Update this file in the same comm
 | Source | `contracts/invoice` |
 | TS bindings | `packages/invoice-client` (generated from this contract id) |
 
-Backend config: `INVOICE_CONTRACT_ID` in `backend/.env`.
+Backend config: `INVOICE_CONTRACT_ID` in `backend/.env` (empty disables the contract rail). The backend
+(`InvoiceContractService`) signs `create`/`cancel` as the platform admin, sets every invoice's payout
+`merchant` to the platform account (custodial), and polls RPC `getEvents` for `paid` every 5 s with its
+cursor in `ListenerCursor` row `soroban-invoice:<contractId>` — a redeploy starts a fresh cursor, and
+links put on-chain against an older contract id lose `rails.contract` until put on-chain again.
 
 ### Interface
 

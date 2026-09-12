@@ -4,6 +4,7 @@ import { Decimal } from '../common/decimal';
 import { FxService } from '../fx/fx.service';
 import { PaymentResponseDto } from '../payments/dto/payment-response.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { InvoiceContractService } from '../stellar/invoice-contract.service';
 import { PaymentListenerService } from '../stellar/payment-listener.service';
 import { StellarService } from '../stellar/stellar.service';
 import { PayQuoteResponseDto } from './dto/pay-quote-response.dto';
@@ -23,6 +24,7 @@ export class PayService {
     private readonly config: ConfigService,
     private readonly stellarService: StellarService,
     private readonly paymentListenerService: PaymentListenerService,
+    private readonly invoiceContract: InvoiceContractService,
   ) {}
 
   async getQuote(code: string): Promise<PayQuoteResponseDto> {
@@ -75,6 +77,9 @@ export class PayService {
           `submitted-hint check failed for ${txHash}: ${err instanceof Error ? err.message : String(err)}`,
         );
       });
+    // A contract-rail payment is an invoke_host_function the Horizon check above ignores;
+    // pull its `paid` event now instead of waiting for the next poll (errors are logged inside).
+    void this.invoiceContract.pollEvents();
   }
 
   async getStatus(code: string): Promise<{

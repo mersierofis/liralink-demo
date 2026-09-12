@@ -23,7 +23,7 @@ export interface Merchant {
 export interface Payment {
   id: string;
   linkId: string;
-  rail: PayRail; // 'contract' once the Soroban invoice contract rail exists; 'memo' today
+  rail: PayRail; // 'memo' = classic payment with text memo; 'contract' = paid through the Soroban invoice contract
   txHash: string;
   payerAddress: string;
   amountUSDC: string; // decimal string, 7 dp — the amount of *this* transaction, not the link total
@@ -50,6 +50,8 @@ export interface PaymentLink {
   shortfallUSDC?: string; // decimal string, 7 dp — set only while status is 'underpaid'
   payment?: Payment; // most recent transfer (the completing one once paid) — convenience alias for payments.at(-1)
   payments: Payment[]; // every successful transfer that credited this link — partial installments AND the completing payment; ordered oldest→newest
+  // set once POST /links/:id/onchain recorded it on the Soroban invoice contract; quotedUSDC is then locked until expiresAt
+  contract?: { contractId: string; invoiceCode: string; deadlineLedger: number; txHash?: string };
   createdAt: string;
 }
 
@@ -104,9 +106,9 @@ export interface PayQuote {
   receivedUSDC: string;
   shortfallUSDC?: string;
   rails: {
-    // absent until the Soroban invoice contract is deployed (see 00-PROJECT.md §7)
+    // present only after the merchant called POST /links/:id/onchain — pay with invoice.pay(invoiceCode, payer) (see 00-PROJECT.md §7)
     contract?: { contractId: string; invoiceCode: string };
-    // the only rail implemented so far — classic payment with a text memo
+    // always present — classic payment with a text memo
     memo?: { destination: string; memo: string };
   };
   asset: { code: string; issuer: string };

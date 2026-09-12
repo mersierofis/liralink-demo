@@ -58,7 +58,11 @@ Build them fully against MSW now (shapes are frozen in `api.types.ts`: `Balance`
    Operation.payment({ destination, asset: usdc, amount: q.amountUSDC })
    Memo.text(memo)
    ```
-   `rails.contract` is absent until the Soroban rail ships (phase 3) — always guard on `rails.memo`.
+   `rails.contract` is present only after the merchant called `POST /links/:id/onchain`; guard on it.
+   To pay through it: `invoice.pay({ code: invoiceCode, payer: <wallet G...> })` with the TS bindings in
+   `packages/invoice-client` (contract id `rails.contract.contractId`), sign with the wallet, send,
+   then `POST /pay/:code/submitted` as usual. The contract moves exactly the on-chain amount, so no
+   memo and no amount input. `Payment.rail` is then `'contract'`.
    **Never drop the memo** — the listener matches the payment by `memo === code`; no memo = no match.
 
 2. **All money is decimal strings. Never parse to `number`.** `amountTRY` is 2 dp (`"5000.00"`),

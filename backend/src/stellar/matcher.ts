@@ -87,14 +87,22 @@ export function match(
     return { kind: 'ignored', reason: 'missing or non-text memo' };
   }
   if (!link) return { kind: 'ignored', reason: 'no matching link for memo' };
+  return matchAmount(link, new Decimal(op.amount));
+}
+
+/** The link-status + amount half of `match` — also used by the contract rail, where the
+ * invoice contract has already pinned destination and asset and there is no memo. */
+export function matchAmount(
+  link: LinkForMatch,
+  amountUSDC: Decimal,
+): MatchResult {
   if (link.status !== 'open' && link.status !== 'underpaid')
     return {
       kind: 'stray',
-      amountUSDC: new Decimal(op.amount),
+      amountUSDC,
       reason: `link status is "${link.status}"`,
     };
 
-  const amountUSDC = new Decimal(op.amount);
   const totalReceivedUSDC = link.receivedUSDC.plus(amountUSDC);
 
   if (totalReceivedUSDC.lessThan(link.quotedUSDC)) {

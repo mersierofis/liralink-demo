@@ -36,6 +36,8 @@ docker-compose.yml   Postgres 16 for local dev (localhost:5433)
 
 - **Backend — Phase 1 green.** Live: `/auth/register|login`, `GET/PATCH /me`, all `/links`, `/pay/:code`,
   `/pay/:code/submitted`, `/pay/:code/status`, `/health`, `/fx`. Implementation matches `00-PROJECT.md` §6.
+- **Soroban contract rail live (testnet).** `POST /links/:id/onchain` → `rails.contract` on `/pay/:code`;
+  payments through `invoice.pay` are detected via RPC events (`Payment.rail = 'contract'`). Ids: `docs/deployments.md`.
 - **Backend — Phase 2 NOT built.** `/balance`, `/payments`, `/settlements`, `/withdrawals` have no
   endpoints yet (tables/types exist). Frontends must mock these until they go live.
 - **Frontends — not scaffolded.** Both build against MSW mock (`VITE_USE_MOCK=true`) until each backend

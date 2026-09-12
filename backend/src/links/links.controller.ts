@@ -68,4 +68,14 @@ export class LinksController {
     const link = await this.linksService.cancel(merchant.id, id);
     return LinkResponseDto.fromEntity(link, this.config);
   }
+
+  @Post(':id/onchain')
+  @HttpCode(HttpStatus.OK)
+  async putOnchain(
+    @CurrentMerchant() merchant: Merchant,
+    @Param('id') id: string,
+  ): Promise<LinkResponseDto> {
+    const link = await this.linksService.putOnchain(merchant.id, id);
+    return LinkResponseDto.fromEntity(link, this.config);
+  }
 }
