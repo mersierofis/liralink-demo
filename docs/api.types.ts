@@ -51,7 +51,12 @@ export interface PaymentLink {
   payments: Payment[]; // every successful transfer that credited this link — partial installments AND the completing payment; ordered oldest→newest
   // Soroban invoice, created best-effort by POST /links (retry: POST /links/:id/onchain); null if not on-chain.
   // While set, quotedUSDC is locked until expiresAt (quoteExpiresAt === expiresAt) and never re-quoted.
-  onchain: { contractId: string; invoiceCode: string; deadlineLedger: number; txHash?: string } | null;
+  onchain: {
+    contractId: string;
+    invoiceCode: string;
+    deadlineLedger: number;
+    txHash?: string;
+  } | null;
   createdAt: string;
 }
 
@@ -134,7 +139,10 @@ export interface ApiError {
  * `link.status` / `receivedUSDC` are the link's CURRENT values (not as of this transfer): a
  * partial payment shows `status: 'underpaid'` with `receivedUSDC` < `quotedUSDC`. */
 export interface PaymentListItem extends Payment {
-  link: Pick<PaymentLink, 'code' | 'title' | 'amountTRY' | 'status' | 'quotedUSDC' | 'receivedUSDC'>;
+  link: Pick<
+    PaymentLink,
+    'code' | 'title' | 'amountTRY' | 'status' | 'quotedUSDC' | 'receivedUSDC'
+  >;
   settlement: Settlement | null;
 }
 
