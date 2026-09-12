@@ -1,12 +1,17 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { ANCHOR_ADAPTER, type AnchorAdapter } from '../anchor/anchor.adapter';
+import {
+  ANCHOR_ADAPTER,
+  type AnchorAdapter,
+  settlementModeFor,
+} from '../anchor/anchor.adapter';
 import { BalanceService } from '../balance/balance.service';
 import { Decimal } from '../common/decimal';
 import { Paginated } from '../common/dto/pagination.dto';
@@ -29,11 +34,15 @@ export class WithdrawalsService {
   ) {}
 
   /** Reserves the amount immediately (non-failed withdrawals count against availableTRY), then
-   * pays out through the anchor in the background. */
+   * pays out through the anchor in the background. Balance mode only. */
   async create(
     merchantId: string,
     dto: CreateWithdrawalDto,
   ): Promise<Withdrawal> {
+    if (settlementModeFor(this.anchor.name) === 'auto_payout') {
+      // The anchor pays the IBAN during settlement (docs/anchor.md) — nothing accrues to withdraw.
+      throw new ConflictException('Payouts are automatic in this mode');
+    }
     const amountTRY = new Decimal(dto.amountTRY);
     if (amountTRY.lessThanOrEqualTo(0)) {
       throw new BadRequestException('amountTRY must be greater than 0.00');

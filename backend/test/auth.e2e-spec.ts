@@ -81,6 +81,7 @@ describe('Auth + Merchants (e2e)', () => {
       .expect(200)
       .expect((res) => {
         expect(res.body.email).toBe(email);
+        expect(res.body.settlementMode).toBe('balance');
       });
   });
 

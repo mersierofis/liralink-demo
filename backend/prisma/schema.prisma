@@ -121,6 +121,11 @@ model Settlement {
   amountTRY   Decimal      @db.Decimal(20, 7)
   fxRate      Decimal      @db.Decimal(20, 7)
   savedUSDC   Decimal      @default(0) @db.Decimal(20, 7)
+  // Set on completion: the anchor's fee (USDC) and the TRY credited / paid out after it,
+  // amountTRY × (amountUSDC − feeUSDC) / amountUSDC. Null on rows completed before fees were
+  // recorded (all mock, fee 0) — balance and the API read those as net = gross.
+  feeUSDC     Decimal?     @db.Decimal(20, 7)
+  netTRY      Decimal?     @db.Decimal(20, 7)
   provider    String
   status      SettleStatus @default(pending)
   // mock: mock-settle-…; sep24: the anchor's transaction id

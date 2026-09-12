@@ -1,5 +1,49 @@
 import { Decimal } from '../common/decimal';
-import { jwtExpiresAt, sep24Phase, withdrawBlock, withdrawMemo } from './sep24';
+import {
+  jwtExpiresAt,
+  sep24FeeUSDC,
+  sep24Phase,
+  withdrawBlock,
+  withdrawMemo,
+} from './sep24';
+
+const USDC =
+  'stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+
+describe('sep24FeeUSDC', () => {
+  const base = { id: 'x', status: 'completed' };
+
+  it('reads fee_details in our USDC (testanchor: 10%)', () => {
+    expect(
+      sep24FeeUSDC(
+        { ...base, fee_details: { total: '0.1', asset: USDC } },
+        USDC,
+      )?.toFixed(7),
+    ).toBe('0.1000000');
+  });
+
+  it('falls back to amount_fee, in the asset sent when no fee asset is given', () => {
+    expect(
+      sep24FeeUSDC(
+        { ...base, amount_fee: '0.25', amount_in_asset: USDC },
+        USDC,
+      )?.toFixed(7),
+    ).toBe('0.2500000');
+  });
+
+  it('is zero when the anchor reports no fee', () => {
+    expect(sep24FeeUSDC(base, USDC)?.toFixed(7)).toBe('0.0000000');
+  });
+
+  it('is null for a fee in another asset', () => {
+    expect(
+      sep24FeeUSDC(
+        { ...base, fee_details: { total: '0.1', asset: 'iso4217:USD' } },
+        USDC,
+      ),
+    ).toBeNull();
+  });
+});
 
 const INFO = {
   withdraw: { USDC: { enabled: true, min_amount: 1, max_amount: 10 } },

@@ -18,7 +18,7 @@ import {
   type PaymentDetectedEvent,
 } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { splitSettlement } from './settlement-math';
+import { netSettlementTRY, splitSettlement } from './settlement-math';
 
 // A pending/processing mock settlement older than this was interrupted (process restart) — re-run it.
 const STUCK_AFTER_MS = 5 * 60_000;
@@ -123,18 +123,28 @@ export class SettlementsService implements OnApplicationBootstrap {
         },
       });
       switch (result.status) {
-        case 'completed':
+        case 'completed': {
+          const netTRY = netSettlementTRY(
+            settlement.amountTRY,
+            settlement.amountUSDC,
+            result.feeUSDC,
+          );
           await this.prisma.settlement.update({
             where: { id },
             data: {
               status: 'completed',
               anchorRef: result.ref,
               blockedReason: null,
+              feeUSDC: result.feeUSDC,
+              netTRY,
               completedAt: new Date(),
             },
           });
-          this.logger.log(`Settlement ${id} completed (${result.ref})`);
+          this.logger.log(
+            `Settlement ${id} completed (${result.ref}): ${netTRY.toFixed(2)} TRY net of a ${result.feeUSDC.toFixed(7)} USDC fee`,
+          );
           break;
+        }
         case 'processing':
           await this.prisma.settlement.update({
             where: { id },

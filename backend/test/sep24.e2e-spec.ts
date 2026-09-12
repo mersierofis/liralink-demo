@@ -126,7 +126,11 @@ const IBAN = 'TR330006100519786457841326';
       anchorRef: null,
       anchorTxHash: null,
     });
-    await prisma.settlement.delete({ where: { id: s.id } });
+    // Fail it rather than delete it, so the minute job neither resumes it nor re-settles the link.
+    await prisma.settlement.update({
+      where: { id: s.id },
+      data: { status: 'failed' },
+    });
   });
 
   it('blocks above the anchor maximum (10 USDC) — nothing opened at the anchor', async () => {
@@ -143,7 +147,11 @@ const IBAN = 'TR330006100519786457841326';
       anchorRef: null,
       anchorTxHash: null,
     });
-    await prisma.settlement.delete({ where: { id: s.id } });
+    // Fail it rather than delete it, so the minute job neither resumes it nor re-settles the link.
+    await prisma.settlement.update({
+      where: { id: s.id },
+      data: { status: 'failed' },
+    });
   });
 
   it('settles 1 USDC end-to-end: withdraw → KYC → payment with memo → anchor completed', async () => {
@@ -166,10 +174,17 @@ const IBAN = 'TR330006100519786457841326';
     expect(tx.successful).toBe(true);
     expect(tx.memo_type).not.toBe('none');
 
+    // testanchor keeps 10%: 0.1 of 1 USDC → 30.60 of 34.00 TRY, paid to the IBAN (auto_payout).
+    expect(s.feeUSDC?.toFixed(7)).toBe('0.1000000');
+    expect(s.netTRY?.toFixed(2)).toBe('30.60');
     const balance = await auth(http().get('/api/balance')).expect(200);
-    expect(balance.body.availableTRY).toBe('34.00');
+    expect(balance.body).toMatchObject({
+      availableTRY: '0.00',
+      pendingTRY: '0.00',
+      paidOutTRY: '30.60',
+    });
 
-    // API shape unchanged: SEP-24 internals are not exposed.
+    // SEP-24 internals are not exposed.
     const list = await auth(http().get('/api/settlements')).expect(200);
     const item = (list.body.items as Record<string, unknown>[]).find(
       (i) => i.id === s.id,
@@ -178,6 +193,8 @@ const IBAN = 'TR330006100519786457841326';
       provider: 'sep24',
       status: 'completed',
       anchorRef: s.anchorRef,
+      feeUSDC: '0.1000000',
+      netTRY: '30.60',
     });
     expect(item).not.toHaveProperty('interactiveUrl');
     expect(item).not.toHaveProperty('anchorTxXdr');

@@ -31,3 +31,25 @@ export function splitSettlement(
     .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   return { amountUSDC: quotedUSDC.minus(savedUSDC), amountTRY, savedUSDC };
 }
+
+/**
+ * TRY credited (or paid out) for a completed settlement after the anchor's fee: the gross
+ * `amountTRY` scaled by the share of `amountUSDC` that reached fiat. Rounds down to kuruş —
+ * never credits more than the anchor delivered.
+ */
+export function netSettlementTRY(
+  amountTRY: Decimal,
+  amountUSDC: Decimal,
+  feeUSDC: Decimal,
+): Decimal {
+  if (feeUSDC.isNegative() || feeUSDC.greaterThan(amountUSDC)) {
+    throw new Error(
+      `fee ${feeUSDC.toFixed(7)} USDC is outside 0..${amountUSDC.toFixed(7)}`,
+    );
+  }
+  if (feeUSDC.isZero()) return amountTRY;
+  return amountTRY
+    .times(amountUSDC.minus(feeUSDC))
+    .div(amountUSDC)
+    .toDecimalPlaces(2, Decimal.ROUND_DOWN);
+}

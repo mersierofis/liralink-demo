@@ -80,12 +80,14 @@ type LinkStatus   = 'open' | 'underpaid' | 'paid' | 'expired' | 'cancelled';
 type PayRail      = 'contract' | 'memo';       // 'contract' reserved for the Soroban invoice rail (phase 2, not yet built)
 type SettleStatus = 'pending' | 'processing' | 'completed' | 'failed';
 type WdStatus     = 'requested' | 'processing' | 'completed' | 'failed';
+type SettlementMode = 'balance' | 'auto_payout'; // balance: TRY accrues, merchant withdraws (mock anchor) · auto_payout: the anchor pays the IBAN at settlement (sep24)
 
 interface Merchant {
   id: string; email: string; businessName: string;
   iban?: string;                 // for withdrawals
   autoSavePercent: number;       // 0–50, default 0 (DeFindex stretch)
   unallocatedUSDC: string;       // decimal string, 7 dp — excess from overpaid links, awaiting manual handling
+  settlementMode: SettlementMode; // from the backend's ANCHOR_PROVIDER — Withdraw button vs "Paid to IBAN"
   createdAt: string;
 }
 
@@ -124,6 +126,8 @@ interface Settlement {
   id: string; merchantId: string; paymentId: string;
   amountUSDC: string; amountTRY: string; fxRate: string;
   savedUSDC: string;             // autoSave portion kept in USDC (stretch), "0"
+  feeUSDC: string | null;        // anchor fee kept from amountUSDC, 7 dp — null until completed (mock: "0.0000000")
+  netTRY: string | null;         // TRY credited (balance) or paid to the IBAN (auto_payout), 2 dp — null until completed
   provider: 'mock' | 'sep24';
   status: SettleStatus; anchorRef?: string;
   createdAt: string; completedAt?: string;
@@ -136,6 +140,7 @@ interface Withdrawal {
 
 interface Balance {
   availableTRY: string; pendingTRY: string; savedUSDC: string; unallocatedUSDC: string;
+  paidOutTRY: string;            // 2 dp — Σ netTRY of completed auto_payout settlements, already on the merchant's IBAN
 }
 
 interface PayQuote {                 // what the payer page renders
@@ -165,7 +170,7 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 |---|---|---|
 | POST | `/auth/register` | `{ email, password, businessName }` → `201 { token, merchant }` |
 | POST | `/auth/login` | `{ email, password }` → `200 { token, merchant }` |
-| GET | `/me` | → `Merchant` |
+| GET | `/me` | → `Merchant` (incl. `settlementMode`) |
 | PATCH | `/me` | `{ businessName?, iban?, autoSavePercent? }` → `Merchant` |
 
 ### Payment links (merchant)
@@ -183,10 +188,10 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 | GET | `/balance` | `Balance` (includes `unallocatedUSDC`) |
 | GET | `/payments?page=&limit=` | `{ items: (Payment & { link: Pick<PaymentLink,'code'|'title'|'amountTRY'>, settlement: Settlement \| null })[], total }` (newest first; `settlement` is `null` for installments that didn't complete the link) |
 | GET | `/settlements?page=&limit=` | `{ items: Settlement[], total }` (newest first) — one per paid link, created on detection, `pending → processing → completed` via the anchor |
-| POST | `/withdrawals` | `{ amountTRY, iban? }` → `201 Withdrawal` (`status: 'requested'`, amount reserved immediately). `422` if > `availableTRY`; `400` if `amountTRY` ≤ 0 or no `iban` in body or profile |
+| POST | `/withdrawals` | `{ amountTRY, iban? }` → `201 Withdrawal` (`status: 'requested'`, amount reserved immediately). `422` if > `availableTRY`; `400` if `amountTRY` ≤ 0 or no `iban` in body or profile; `409` `"Payouts are automatic in this mode"` when `settlementMode` is `auto_payout` |
 | GET | `/withdrawals?page=&limit=` | `{ items: Withdrawal[], total }` (newest first) |
 
-Balance: `availableTRY = Σ completed settlements.amountTRY − Σ non-failed withdrawals`, `pendingTRY = Σ pending/processing settlements`, `savedUSDC = Σ savedUSDC of non-failed settlements`. A settlement credits the link's locked `amountTRY` × (100 − `autoSavePercent`)% and keeps `quotedUSDC` × `autoSavePercent`% as `savedUSDC`.
+Balance: `availableTRY = Σ netTRY of completed balance-mode (mock) settlements − Σ non-failed withdrawals`, `paidOutTRY = Σ netTRY of completed auto_payout (sep24) settlements` (never withdrawable — the anchor already paid the IBAN), `pendingTRY = Σ amountTRY of pending/processing settlements` (gross; the fee is known only on completion), `savedUSDC = Σ savedUSDC of non-failed settlements`. Which bucket a settlement lands in follows the provider it was created with. A settlement's gross `amountTRY` is the link's locked `amountTRY` × (100 − `autoSavePercent`)% (keeping `quotedUSDC` × `autoSavePercent`% as `savedUSDC`); on completion `netTRY = amountTRY × (amountUSDC − feeUSDC) / amountUSDC`, rounded down to kuruş, and balances use `netTRY`.
 
 ### Payer (public, no auth)
 | Method | Path | Response |
@@ -198,11 +203,11 @@ Balance: `availableTRY = Σ completed settlements.amountTRY − Σ non-failed wi
 ### System
 | Method | Path | Response |
 |---|---|---|
-| GET | `/health` | `{ ok: true, horizon: 'up'|'down', anchor: 'mock'|'sep24', listener: 'running'|'stopped', platformAccount: 'G...' }` |
+| GET | `/health` | `{ ok: true, horizon: 'up'|'down', anchor: 'mock'|'sep24', listener: 'running'|'stopped', platformAccount: 'G...', settlementMode: 'balance'|'auto_payout' }` |
 | GET | `/fx` | `{ pair: 'USDC/TRY', rate: '34.00', source: 'mock'|'live', fetchedAt }` |
 
 ### Status codes
-`200/201/202` success · `400` validation · `401` no/invalid token · `404` unknown link/code · `409` invalid state transition (e.g. cancel a paid link) · `422` business rule (insufficient balance).
+`200/201/202` success · `400` validation · `401` no/invalid token · `404` unknown link/code · `409` invalid state transition (e.g. cancel a paid link) or not allowed in this settlement mode (`POST /withdrawals` when `auto_payout`) · `422` business rule (insufficient balance).
 
 ## 7. Soroban invoice contract (phase 2, Hasan — required; frontends get an optional second pay button)
 
