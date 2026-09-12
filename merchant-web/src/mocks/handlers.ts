@@ -142,7 +142,14 @@ export const handlers: HttpHandler[] = [
       .flatMap((link) =>
         link.payments.map((payment) => ({
           ...payment,
-          link: { code: link.code, title: link.title, amountTRY: link.amountTRY },
+          link: {
+            code: link.code,
+            title: link.title,
+            amountTRY: link.amountTRY,
+            status: link.status,
+            quotedUSDC: link.quotedUSDC,
+            receivedUSDC: link.receivedUSDC,
+          },
           settlement: state.settlements.find((s) => s.paymentId === payment.id) ?? null,
         })),
       )
