@@ -181,7 +181,7 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 | Method | Path | Response |
 |---|---|---|
 | GET | `/balance` | `Balance` (includes `unallocatedUSDC`) |
-| GET | `/payments?page=&limit=` | `{ items: (Payment & { link: Pick<PaymentLink,'code'|'title'|'amountTRY'>, settlement: Settlement \| null })[], total }` (newest first; `settlement` is `null` for installments that didn't complete the link) |
+| GET | `/payments?page=&limit=` | `{ items: (Payment & { link: Pick<PaymentLink,'code'|'title'|'amountTRY'|'status'|'quotedUSDC'|'receivedUSDC'>, settlement: Settlement \| null })[], total }` (newest first; `settlement` is `null` for installments that didn't complete the link; `link.status`/`receivedUSDC` are the link's current values, so a partial payment shows as `underpaid` with `receivedUSDC` < `quotedUSDC`) |
 | GET | `/settlements?page=&limit=` | `{ items: Settlement[], total }` (newest first) — one per paid link, created on detection, `pending → processing → completed` via the anchor |
 | POST | `/withdrawals` | `{ amountTRY, iban? }` → `201 Withdrawal` (`status: 'requested'`, amount reserved immediately). `422` if > `availableTRY`; `400` if `amountTRY` ≤ 0 or no `iban` in body or profile |
 | GET | `/withdrawals?page=&limit=` | `{ items: Withdrawal[], total }` (newest first) |

@@ -51,6 +51,12 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
   `processing → completed`. `422` = more than `availableTRY`; `400` = no `iban` in the body and none
   on the profile (`PATCH /me`).
 - `PaymentListItem.settlement` is `null` for installment payments that didn't complete a link.
+- `PaymentListItem.link` = `{ code, title, amountTRY, status, quotedUSDC, receivedUSDC }` — the link's
+  **current** status and totals, not a snapshot at the time of that transfer. Label rows with it:
+  `status === 'underpaid'` → "Partial — `receivedUSDC` of `quotedUSDC` USDC" (an installment still
+  waiting for a top-up); `status === 'paid'` with `settlement === null` → an earlier installment of
+  a link that was later completed; `status === 'paid'` with a `settlement` → the completing payment.
+  Compare the decimal strings as strings or with a decimal lib — never `Number()`.
 - `savedUSDC` / auto-save: a settlement keeps `autoSavePercent`% of the USDC and credits
   `amountTRY` × (100 − `autoSavePercent`)%.
 

@@ -132,8 +132,59 @@ describe('Settlements, balance, withdrawals, payments (e2e)', () => {
     expect(list.body.total).toBe(1);
     expect(list.body.items[0]).toMatchObject({
       linkId: link.id,
-      link: { code: link.code, amountTRY: '340.00' },
+      link: {
+        code: link.code,
+        title: 'money 340.00',
+        amountTRY: '340.00',
+        status: 'paid',
+        quotedUSDC: '10.0000000',
+        receivedUSDC: '10.0000000',
+      },
       settlement: { status: 'completed', amountTRY: '340.00' },
+    });
+  });
+
+  it('labels a partial payment in /payments with the link status and totals', async () => {
+    const res = await auth(http().post('/api/links'))
+      .send({ title: 'money partial', amountTRY: '340.00' })
+      .expect(201);
+    const link = await prisma.paymentLink.findUniqueOrThrow({
+      where: { id: res.body.id as string },
+    });
+    const half = new Decimal('5.0000000');
+    const op: InboundOp = {
+      opId: `e2e-${randomBytes(8).toString('hex')}`,
+      txHash: randomBytes(32).toString('hex'),
+      from: 'GBRZSG7K6ZXJRCMYM2O2HO2DKR7RO2ACZ5FARBMQZBB4YZMDFDXFUTV7',
+      to: 'GDWV6USF4R2ULWR5XW3TEUZSIRGRCU7PQWGSBDYJVIRFNAJ3LVNQ34N2',
+      assetType: 'credit_alphanum4',
+      assetCode: 'USDC',
+      amount: half.toFixed(7),
+      memoType: 'text',
+      successful: true,
+    };
+    await payments.recordUnderpayment(
+      link.id,
+      op,
+      half,
+      half,
+      link.quotedUSDC.minus(half),
+      1,
+    );
+
+    const list = await auth(http().get('/api/payments')).expect(200);
+    const row = (list.body.items as Record<string, unknown>[]).find(
+      (i) => i.linkId === link.id,
+    );
+    expect(row).toMatchObject({
+      amountUSDC: '5.0000000',
+      link: {
+        code: link.code,
+        status: 'underpaid',
+        quotedUSDC: '10.0000000',
+        receivedUSDC: '5.0000000',
+      },
+      settlement: null,
     });
   });
 

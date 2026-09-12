@@ -2,10 +2,11 @@
 // model. Every type below is returned by a live endpoint (Settlement/Withdrawal/Balance
 // went live with phase 2 part D).
 
-export type LinkStatus = 'open' | 'underpaid' | 'paid' | 'expired' | 'cancelled';
-export type PayRail = 'contract' | 'memo';
-export type SettleStatus = 'pending' | 'processing' | 'completed' | 'failed';
-export type WdStatus = 'requested' | 'processing' | 'completed' | 'failed';
+export type LinkStatus =
+  "open" | "underpaid" | "paid" | "expired" | "cancelled";
+export type PayRail = "contract" | "memo";
+export type SettleStatus = "pending" | "processing" | "completed" | "failed";
+export type WdStatus = "requested" | "processing" | "completed" | "failed";
 
 export interface Merchant {
   id: string;
@@ -51,7 +52,12 @@ export interface PaymentLink {
   payments: Payment[]; // every successful transfer that credited this link — partial installments AND the completing payment; ordered oldest→newest
   // Soroban invoice, created best-effort by POST /links (retry: POST /links/:id/onchain); null if not on-chain.
   // While set, quotedUSDC is locked until expiresAt (quoteExpiresAt === expiresAt) and never re-quoted.
-  onchain: { contractId: string; invoiceCode: string; deadlineLedger: number; txHash?: string } | null;
+  onchain: {
+    contractId: string;
+    invoiceCode: string;
+    deadlineLedger: number;
+    txHash?: string;
+  } | null;
   createdAt: string;
 }
 
@@ -63,7 +69,7 @@ export interface Settlement {
   amountTRY: string;
   fxRate: string;
   savedUSDC: string;
-  provider: 'mock' | 'sep24';
+  provider: "mock" | "sep24";
   status: SettleStatus;
   anchorRef?: string;
   createdAt: string;
@@ -109,7 +115,7 @@ export interface PayQuote {
     memo?: { destination: string; memo: string };
   };
   asset: { code: string; issuer: string };
-  network: 'testnet';
+  network: "testnet";
   payment?: Payment; // most recent transfer (completing one once paid) — alias for payments.at(-1)
   payments: Payment[]; // all transfers that credited this link, oldest→newest
 }
@@ -130,9 +136,14 @@ export interface ApiError {
 }
 
 /** One row of GET /payments — every transfer, newest first. `settlement` is null for
- * installments that didn't complete their link (only the completing payment settles). */
+ * installments that didn't complete their link (only the completing payment settles).
+ * `link.status` / `receivedUSDC` are the link's CURRENT values (not as of this transfer): a
+ * partial payment shows `status: 'underpaid'` with `receivedUSDC` < `quotedUSDC`. */
 export interface PaymentListItem extends Payment {
-  link: Pick<PaymentLink, 'code' | 'title' | 'amountTRY'>;
+  link: Pick<
+    PaymentLink,
+    "code" | "title" | "amountTRY" | "status" | "quotedUSDC" | "receivedUSDC"
+  >;
   settlement: Settlement | null;
 }
 
@@ -151,15 +162,15 @@ export interface AuthResult {
 // ---- Health / FX ----
 export interface HealthResponse {
   ok: boolean;
-  horizon: 'up' | 'down';
-  anchor: 'mock' | 'sep24';
-  listener: 'running' | 'stopped';
+  horizon: "up" | "down";
+  anchor: "mock" | "sep24";
+  listener: "running" | "stopped";
   platformAccount: string;
 }
 
 export interface FxResponse {
-  pair: 'USDC/TRY';
+  pair: "USDC/TRY";
   rate: string;
-  source: 'mock' | 'live';
+  source: "mock" | "live";
   fetchedAt: string;
 }
