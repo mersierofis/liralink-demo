@@ -1,0 +1,10 @@
+# Code owners — GitHub requests their review automatically on PRs that touch these paths.
+# The last matching pattern wins.
+
+backend/**        @movilidadagil
+contracts/**      @movilidadagil
+merchant-web/**   @vuslattt
+pay-web/**        @Yunussoydan33
+
+# API contract and specs: everyone is asked to review.
+docs/**           @movilidadagil @vuslattt @Yunussoydan33

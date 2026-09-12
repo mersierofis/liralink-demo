@@ -1,0 +1,72 @@
+name: pay-web
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pay-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      pay-web: ${{ steps.filter.outputs.pay-web }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            pay-web:
+              - 'pay-web/**'
+              - '.nvmrc'
+              - '.github/workflows/pay-web.yml'
+
+  # The required status check. Skipped (= passing) when the PR doesn't touch pay-web/.
+  pay-web:
+    needs: changes
+    if: needs.changes.outputs.pay-web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pay-web
+    steps:
+      - uses: actions/checkout@v4
+      # pay-web is not scaffolded yet (only a README) — pass until a package.json lands.
+      - name: Detect scaffold
+        id: scaffold
+        run: |
+          if [ -f package.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pay-web has no package.json yet — nothing to check"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.scaffold.outputs.present == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: pay-web/package-lock.json
+      - if: steps.scaffold.outputs.present == 'true'
+        run: npm ci
+      - name: Lint
+        if: steps.scaffold.outputs.present == 'true'
+        run: npm run lint --if-present
+      - name: Typecheck
+        if: steps.scaffold.outputs.present == 'true'
+        run: npm run typecheck --if-present
+      - name: Tests
+        if: steps.scaffold.outputs.present == 'true'
+        run: npm test --if-present
+      - name: Build
+        if: steps.scaffold.outputs.present == 'true'
+        run: npm run build --if-present
