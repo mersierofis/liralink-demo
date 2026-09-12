@@ -15,11 +15,10 @@ export interface UnsettledPaymentInfo {
  * page of results, or (as caught in review) when the link is still `underpaid` and nothing
  * has completed it yet.
  *
- * NOTE: as of 2026-09-13 the live testnet backend hasn't redeployed PR #5 yet, so
- * `link.status`/`quotedUSDC`/`receivedUSDC` come back `undefined` in production even though
- * `docs/api.types.ts` (already merged) says they're required — a real contract drift, not
- * something to paper over. The fallback below keeps the UI from showing "undefined" until
- * the backend catches up; remove it once `GET /health` (or a real payment) confirms it has.
+ * Defensive fallback: `link.status` is typed as required, but if a deploy is ever behind the
+ * merged contract (seen once already — PR #5 landed in docs/api.types.ts before the live
+ * testnet backend had redeployed it) these fields come back `undefined` at runtime. Render a
+ * generic label instead of literally showing "undefined".
  */
 export function describeUnsettledPayment(payment: PaymentListItem): UnsettledPaymentInfo {
   const { link } = payment
