@@ -8,7 +8,9 @@ import type {
 } from '@/api/types'
 
 export const MOCK_TOKEN = 'mock-jwt-token'
-export const MOCK_PASSWORD = 'demo1234'
+// Mock-only credential — bears no relation to the real demo account's password, which was
+// rotated out of the repo (backend/.env SEED_DEMO_PASSWORD, ask Hasan).
+export const MOCK_PASSWORD = 'mock-password'
 const FX_RATE = '34.0000000'
 const PAY_WEB_BASE = 'http://localhost:5174/p'
 
@@ -82,6 +84,7 @@ function makePaidLink(opts: {
     netTRY: opts.amountTRY,
     provider: 'mock',
     status: 'completed',
+    failReason: null,
     anchorRef: `mock-settle-${opts.code}`,
     createdAt: detectedAt,
     completedAt: detectedAt,
@@ -208,6 +211,7 @@ export function simulatePayment(linkId: string) {
       netTRY: null,
       provider: 'mock',
       status: 'pending',
+      failReason: null,
       createdAt: new Date().toISOString(),
     }
     state.settlements.unshift(settlement)

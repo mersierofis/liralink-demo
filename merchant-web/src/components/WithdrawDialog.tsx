@@ -19,19 +19,19 @@ import { Input } from '@/components/ui/input'
 import { useCreateWithdrawal } from '@/api/hooks'
 import { HttpError } from '@/api/client'
 import { formatTRY } from '@/lib/money'
+import { TRY_AMOUNT_REGEX, formatToTRYAmount, parseTRYAmount } from '@/lib/tryAmount'
 
 const IBAN_REGEX = /^TR\d{24}$/
 
-function buildSchema(availableTRY: number) {
+function buildSchema(availableTRY: string) {
+  const available = parseTRYAmount(availableTRY)
   return z.object({
     amountTRY: z
       .string()
       .min(1, 'Amount is required')
-      .refine((v) => {
-        const n = Number(v)
-        return Number.isFinite(n) && n > 0
-      }, 'Enter a positive amount')
-      .refine((v) => Number(v) <= availableTRY, `Cannot exceed your available balance (${formatTRY(availableTRY.toFixed(2))})`),
+      .regex(TRY_AMOUNT_REGEX, 'Enter a plain amount, e.g. 1000 or 1000.50')
+      .refine((v) => parseTRYAmount(v).gt(0), 'Enter a positive amount')
+      .refine((v) => parseTRYAmount(v).lte(available), `Cannot exceed your available balance (${formatTRY(availableTRY)})`),
     iban: z.string().regex(IBAN_REGEX, 'IBAN must be TR followed by 24 digits'),
   })
 }
@@ -39,8 +39,7 @@ function buildSchema(availableTRY: number) {
 export function WithdrawDialog({ availableTRY, defaultIban }: { availableTRY: string; defaultIban?: string }) {
   const [open, setOpen] = useState(false)
   const createWithdrawal = useCreateWithdrawal()
-  const available = Number(availableTRY)
-  const schema = buildSchema(available)
+  const schema = buildSchema(availableTRY)
 
   const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
@@ -49,7 +48,7 @@ export function WithdrawDialog({ availableTRY, defaultIban }: { availableTRY: st
 
   const onSubmit = async (values: z.infer<typeof schema>) => {
     try {
-      await createWithdrawal.mutateAsync({ amountTRY: Number(values.amountTRY).toFixed(2), iban: values.iban })
+      await createWithdrawal.mutateAsync({ amountTRY: formatToTRYAmount(values.amountTRY), iban: values.iban })
       toast.success('Withdrawal requested')
       setOpen(false)
       form.reset({ amountTRY: '', iban: values.iban })
@@ -67,7 +66,7 @@ export function WithdrawDialog({ availableTRY, defaultIban }: { availableTRY: st
       }}
     >
       <DialogTrigger asChild>
-        <Button disabled={available <= 0}>Withdraw</Button>
+        <Button disabled={parseTRYAmount(availableTRY).lte(0)}>Withdraw</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>

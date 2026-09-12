@@ -20,7 +20,7 @@ export default function WithdrawalsPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold">Withdrawals</h1>
+        <h1 className="text-2xl font-semibold">{isAutoPayout ? 'Payouts' : 'Withdrawals'}</h1>
         {!isAutoPayout && balance.data && <WithdrawDialog availableTRY={balance.data.availableTRY} defaultIban={merchant?.iban} />}
       </div>
 

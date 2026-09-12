@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge'
-import { formatDateTime, formatTime } from '@/lib/format'
+import { describeUnsettledPayment } from '@/lib/payments'
 import type { PaymentListItem, SettleStatus } from '@/api/types'
 
 const CONFIG: Record<SettleStatus, { label: string; variant: 'success' | 'warning' | 'secondary' | 'destructive' }> = {
@@ -10,28 +10,24 @@ const CONFIG: Record<SettleStatus, { label: string; variant: 'success' | 'warnin
 }
 
 /**
- * `status` is null for an installment payment that didn't complete its link — only the
- * payment that flips the link to `paid` gets settled with the link's full amountTRY (see
- * 04-BACKEND-HANDOFF.md gotcha #5). Label it instead of showing a bare dash, and point at
- * the specific payment it was folded into when it's known (`completingPayment`).
+ * `payment.settlement` is null for an installment that didn't complete its link
+ * (04-BACKEND-HANDOFF.md gotcha #5) — labelled from the link's current status/totals via
+ * describeUnsettledPayment, never guessed from other rows on the page.
  */
-export function SettlementStatusBadge({
-  status,
-  completingPayment,
-}: {
-  status: SettleStatus | null
-  completingPayment?: PaymentListItem
-}) {
-  if (!status) {
-    const detail = completingPayment
-      ? `Folded into the ${formatDateTime(completingPayment.detectedAt)} payment, which completed this link`
-      : 'Partial payment towards this link — settled together with the payment that completed it'
+export function SettlementStatusBadge({ payment }: { payment: PaymentListItem }) {
+  if (!payment.settlement) {
+    const { label, detail } = describeUnsettledPayment(payment)
     return (
       <Badge variant="outline" title={detail}>
-        {completingPayment ? `→ ${formatTime(completingPayment.detectedAt)} payment` : 'Partial payment'}
+        {label}
       </Badge>
     )
   }
+  const { status, failReason } = payment.settlement
   const { label, variant } = CONFIG[status]
-  return <Badge variant={variant}>{label}</Badge>
+  return (
+    <Badge variant={variant} title={status === 'failed' && failReason ? `Reason: ${failReason}` : undefined}>
+      {label}
+    </Badge>
+  )
 }

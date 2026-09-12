@@ -1,6 +1,8 @@
+import { Decimal } from 'decimal.js'
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatTRY, formatUSDC } from '@/lib/money'
+import { formatTRY, formatUSDC, formatUSDCFull } from '@/lib/money'
 import type { Balance, SettlementMode } from '@/api/types'
 
 export function BalanceCard({
@@ -24,8 +26,9 @@ export function BalanceCard({
   }
 
   const isAutoPayout = settlementMode === 'auto_payout'
-  const savedUSDC = Number(balance.savedUSDC)
-  const unallocatedUSDC = Number(balance.unallocatedUSDC)
+  const savedUSDC = new Decimal(balance.savedUSDC)
+  const unallocatedUSDC = new Decimal(balance.unallocatedUSDC)
+  const paidOutTRY = new Decimal(balance.paidOutTRY)
 
   return (
     <Card>
@@ -43,23 +46,27 @@ export function BalanceCard({
           <p className="text-muted-foreground">Pending</p>
           <p className="font-medium">{formatTRY(balance.pendingTRY)}</p>
         </div>
-        {!isAutoPayout && Number(balance.paidOutTRY) > 0 && (
+        {!isAutoPayout && paidOutTRY.gt(0) && (
           <div>
             <p className="text-muted-foreground">Paid out (auto)</p>
             <p className="font-medium">{formatTRY(balance.paidOutTRY)}</p>
           </div>
         )}
-        {savedUSDC > 0 && (
+        {savedUSDC.gt(0) && (
           <div>
             <p className="text-muted-foreground">Held in USD (USDC)</p>
-            <p className="font-medium">{formatUSDC(balance.savedUSDC)}</p>
+            <p className="font-medium" title={formatUSDCFull(balance.savedUSDC)}>
+              {formatUSDC(balance.savedUSDC)}
+            </p>
             <p className="text-xs text-muted-foreground">Held by LiraLink until you request a transfer</p>
           </div>
         )}
-        {unallocatedUSDC > 0 && (
+        {unallocatedUSDC.gt(0) && (
           <div>
             <p className="text-muted-foreground">Unallocated USDC</p>
-            <p className="font-medium">{formatUSDC(balance.unallocatedUSDC)}</p>
+            <p className="font-medium" title={formatUSDCFull(balance.unallocatedUSDC)}>
+              {formatUSDC(balance.unallocatedUSDC)}
+            </p>
           </div>
         )}
       </CardContent>

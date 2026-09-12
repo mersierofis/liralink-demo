@@ -40,14 +40,16 @@ VITE_EXPLORER_ACCOUNT_URL=https://stellar.expert/explorer/testnet/account/
 This repo's own `.env` (git-ignored) currently points at the live testnet deployment:
 `VITE_API_URL=https://liralink-api.tutorialplatform.com/api`, `VITE_USE_MOCK=false`.
 
-Demo login: `demo@liralink.app` / `demo1234`.
+Demo login: `demo@liralink.app` — the password isn't in the repo (it was rotated out, see
+04-BACKEND-HANDOFF.md §5); ask Hasan or Vuslat for it.
 
 ### Against the mock API (no backend needed)
 
 Set `VITE_USE_MOCK=true` in `.env` and restart `npm run dev`. MSW serves every merchant endpoint
 from an in-memory fixture set: the same demo merchant/IBAN, 6 seeded links (2 open, 3 paid, 1
 expired) with realistic tx hashes and completed settlements, and a balance derived from them the
-same way the real backend computes it.
+same way the real backend computes it. Log in with `demo@liralink.app` / `mock-password` (a
+mock-only credential, unrelated to the real account's password above).
 
 **Simulating a payment in mock mode:** open an *open* link's detail page
 (`/links/:id` — click into `DEMO0001` or `DEMO0002` from the Links table) and click **Simulate
