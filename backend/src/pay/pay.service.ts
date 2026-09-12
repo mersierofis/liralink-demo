@@ -10,7 +10,7 @@ import { PayQuoteResponseDto } from './dto/pay-quote-response.dto';
 
 const LINK_INCLUDE = {
   merchant: { select: { businessName: true } },
-  payment: true,
+  payments: { orderBy: { detectedAt: 'asc' } },
 } as const;
 
 @Injectable()
@@ -82,19 +82,21 @@ export class PayService {
     receivedUSDC: string;
     shortfallUSDC?: string;
     payment?: PaymentResponseDto;
+    payments: PaymentResponseDto[];
   }> {
     const link = await this.prisma.paymentLink.findUnique({
       where: { code },
-      include: { payment: true },
+      include: { payments: { orderBy: { detectedAt: 'asc' } } },
     });
     if (!link) throw new NotFoundException('Payment link not found');
+    const payments = link.payments.map((p) => PaymentResponseDto.fromEntity(p));
     return {
       status: link.status,
       receivedUSDC: link.receivedUSDC.toFixed(7),
       shortfallUSDC: link.shortfallUSDC?.toFixed(7) ?? undefined,
-      payment: link.payment
-        ? PaymentResponseDto.fromEntity(link.payment)
-        : undefined,
+      // `payment` = completing/most-recent transfer (backward compat); `payments` = all.
+      payment: payments.at(-1),
+      payments,
     };
   }
 }

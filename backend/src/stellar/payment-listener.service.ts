@@ -229,10 +229,12 @@ export class PaymentListenerService implements OnModuleInit, OnModuleDestroy {
     } else if (result.kind === 'underpaid') {
       await this.paymentsService.recordUnderpayment(
         linkEntity!.id,
+        op,
+        result.amountUSDC,
         result.totalReceivedUSDC,
         result.shortfallUSDC,
+        tx.ledger_attr,
       );
-      await this.paymentsService.recordAttempt(op, linkCode, 'underpaid');
     } else if (result.kind === 'stray') {
       await this.paymentsService.recordStray(
         linkEntity!.id,

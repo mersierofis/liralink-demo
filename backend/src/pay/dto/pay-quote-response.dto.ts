@@ -30,12 +30,14 @@ export class PayQuoteResponseDto {
   rails: { contract?: ContractRail; memo?: MemoRail };
   asset: { code: string; issuer: string };
   network: 'testnet';
+  // `payment` = most recent transfer (completing one once paid); `payments` = all transfers.
   payment?: PaymentResponseDto;
+  payments: PaymentResponseDto[];
 
   static build(
     link: PaymentLink & {
       merchant: { businessName: string };
-      payment?: Payment | null;
+      payments: Payment[];
     },
     config: ConfigService,
     platformPublicKey: string,
@@ -59,9 +61,8 @@ export class PayQuoteResponseDto {
       issuer: config.get<string>('USDC_ISSUER')!,
     };
     dto.network = 'testnet';
-    dto.payment = link.payment
-      ? PaymentResponseDto.fromEntity(link.payment)
-      : undefined;
+    dto.payments = link.payments.map((p) => PaymentResponseDto.fromEntity(p));
+    dto.payment = dto.payments.at(-1);
     return dto;
   }
 }

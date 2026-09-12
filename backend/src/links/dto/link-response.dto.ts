@@ -18,7 +18,10 @@ export class LinkResponseDto {
   payUrl: string;
   receivedUSDC: string;
   shortfallUSDC?: string;
+  // `payment` = the most recent transfer (the completing one once paid), kept for
+  // backward compat; `payments` = every transfer that credited this link.
   payment?: PaymentResponseDto;
+  payments: PaymentResponseDto[];
   createdAt: string;
 
   static fromEntity(
@@ -41,9 +44,8 @@ export class LinkResponseDto {
     dto.payUrl = `${config.get<string>('PAY_WEB_BASE_URL')}/${link.code}`;
     dto.receivedUSDC = link.receivedUSDC.toFixed(7);
     dto.shortfallUSDC = link.shortfallUSDC?.toFixed(7) ?? undefined;
-    dto.payment = link.payment
-      ? PaymentResponseDto.fromEntity(link.payment)
-      : undefined;
+    dto.payments = link.payments.map((p) => PaymentResponseDto.fromEntity(p));
+    dto.payment = dto.payments.at(-1);
     dto.createdAt = link.createdAt.toISOString();
     return dto;
   }

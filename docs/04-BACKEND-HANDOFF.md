@@ -76,6 +76,9 @@ Build them fully against MSW now (shapes are frozen in `api.types.ts`: `Balance`
    top-up (poll keeps running). Overpay → `paid`, excess lands in `merchant.unallocatedUSDC`. Yunus:
    handle a link that goes `underpaid` (show shortfall, allow another payment). Vuslat: surface
    `unallocatedUSDC` on the dashboard if `> 0`.
+   **Every successful transfer is its own `Payment`:** links, `/pay/:code` and `/pay/:code/status`
+   return `payments: Payment[]` (installments + completion, oldest→newest). `payment` is kept as an
+   alias for the latest one — render `payments` when showing tx hashes, or you'll hide installments.
 
 6. **Poll `GET /pay/:code/status` every 2 s** until `status` is terminal (`paid`/`expired`/
    `cancelled`). The `/submitted` POST is only a fire-and-forget hint to speed detection up —

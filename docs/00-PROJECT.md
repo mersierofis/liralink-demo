@@ -105,7 +105,8 @@ interface PaymentLink {
   payUrl: string;                // "https://pay.liralink.app/p/K7Q2M9XA" (env-based)
   receivedUSDC: string;          // decimal string, 7 dp — cumulative USDC matched so far ("0" until first payment)
   shortfallUSDC?: string;        // decimal string, 7 dp — set only while status is 'underpaid'
-  payment?: Payment;             // present when paid — the completing transaction
+  payment?: Payment;             // most recent transfer (the completing one once paid) — alias for payments.at(-1)
+  payments: Payment[];           // every successful transfer that credited this link (installments + completion), oldest→newest
   createdAt: string;
 }
 
@@ -147,7 +148,8 @@ interface PayQuote {                 // what the payer page renders
   };
   asset: { code: 'USDC'; issuer: string };
   network: 'testnet';
-  payment?: Payment;                 // when paid
+  payment?: Payment;                 // most recent transfer (completing one once paid) — alias for payments.at(-1)
+  payments: Payment[];               // all transfers that credited this link, oldest→newest
 }
 
 interface ApiError { statusCode: number; message: string; error?: string }
@@ -187,7 +189,7 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 |---|---|---|
 | GET | `/pay/:code` | `PayQuote` (re-quotes if quote expired and status is `open`) |
 | POST | `/pay/:code/submitted` | `{ txHash }` → `202 { accepted: true }` — hint so backend checks this tx immediately; detection also works without it |
-| GET | `/pay/:code/status` | `{ status: LinkStatus, receivedUSDC, shortfallUSDC?, payment?: Payment }` — poll every 2 s |
+| GET | `/pay/:code/status` | `{ status: LinkStatus, receivedUSDC, shortfallUSDC?, payment?: Payment, payments: Payment[] }` — poll every 2 s (`payments` = every transfer, `payment` = the latest/completing one) |
 
 ### System
 | Method | Path | Response |

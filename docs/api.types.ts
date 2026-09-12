@@ -48,7 +48,8 @@ export interface PaymentLink {
   payUrl: string;
   receivedUSDC: string; // decimal string, 7 dp — cumulative USDC matched so far ("0" until first payment)
   shortfallUSDC?: string; // decimal string, 7 dp — set only while status is 'underpaid'
-  payment?: Payment; // present when paid — the completing transaction (partial top-ups are logged server-side, not exposed per-tx)
+  payment?: Payment; // most recent transfer (the completing one once paid) — convenience alias for payments.at(-1)
+  payments: Payment[]; // every successful transfer that credited this link — partial installments AND the completing payment; ordered oldest→newest
   createdAt: string;
 }
 
@@ -110,7 +111,8 @@ export interface PayQuote {
   };
   asset: { code: string; issuer: string };
   network: 'testnet';
-  payment?: Payment;
+  payment?: Payment; // most recent transfer (completing one once paid) — alias for payments.at(-1)
+  payments: Payment[]; // all transfers that credited this link, oldest→newest
 }
 
 /** What GET /pay/:code/status returns — polled every 2s by the payer page. */
@@ -118,7 +120,8 @@ export interface PayStatus {
   status: LinkStatus;
   receivedUSDC: string;
   shortfallUSDC?: string;
-  payment?: Payment;
+  payment?: Payment; // most recent transfer (completing one once paid) — alias for payments.at(-1)
+  payments: Payment[]; // all transfers that credited this link, oldest→newest
 }
 
 export interface ApiError {

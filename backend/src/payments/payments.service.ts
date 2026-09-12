@@ -80,24 +80,46 @@ export class PaymentsService {
     return payment;
   }
 
-  /** Partial payment: link stays open for a top-up, nothing settles yet. */
+  /**
+   * Partial payment: this transfer is recorded as its own Payment row (every
+   * successful transfer gets one), the link stays `underpaid` for a later top-up,
+   * and nothing settles yet (no `payment.detected` — settlement only fires on paid).
+   */
   async recordUnderpayment(
     linkId: string,
+    op: InboundOp,
+    amountUSDC: Decimal,
     totalReceivedUSDC: Decimal,
     shortfallUSDC: Decimal,
-  ): Promise<void> {
-    await this.prisma.paymentLink.update({
-      where: { id: linkId },
-      data: {
-        status: 'underpaid',
-        receivedUSDC: totalReceivedUSDC,
-        shortfallUSDC,
-      },
+    ledger: number,
+  ): Promise<Payment> {
+    const payment = await this.prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.create({
+        data: {
+          linkId,
+          txHash: op.txHash,
+          payerAddress: op.from,
+          amountUSDC,
+          rail: 'memo',
+          ledger,
+        },
+      });
+      await tx.paymentLink.update({
+        where: { id: linkId },
+        data: {
+          status: 'underpaid',
+          receivedUSDC: totalReceivedUSDC,
+          shortfallUSDC,
+        },
+      });
+      return payment;
     });
     this.logger.warn(
-      `Link ${linkId} underpaid: received ${totalReceivedUSDC.toFixed(7)} USDC, ` +
+      `Link ${linkId} underpaid: transfer ${amountUSDC.toFixed(7)} USDC ` +
+        `(tx ${op.txHash}), received ${totalReceivedUSDC.toFixed(7)} USDC, ` +
         `shortfall ${shortfallUSDC.toFixed(7)} USDC`,
     );
+    return payment;
   }
 
   async recordAttempt(

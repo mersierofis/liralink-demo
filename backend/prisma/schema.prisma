@@ -77,7 +77,9 @@ model PaymentLink {
   shortfallUSDC  Decimal?   @db.Decimal(20, 7)
   createdAt      DateTime   @default(now())
 
-  payment Payment?
+  // One row per successful transfer that credited this link (partial installments
+  // AND the completing payment) — a link can accumulate several. See PaymentsService.
+  payments Payment[]
 
   @@index([code])
   @@index([merchantId, createdAt])
@@ -85,7 +87,9 @@ model PaymentLink {
 
 model Payment {
   id           String      @id @default(uuid())
-  linkId       String      @unique
+  // NOT unique: a link can have multiple payments (partial top-ups + completion).
+  // Idempotency is enforced by the unique txHash, not by one-payment-per-link.
+  linkId       String
   link         PaymentLink @relation(fields: [linkId], references: [id])
   txHash       String      @unique
   payerAddress String
@@ -97,6 +101,8 @@ model Payment {
   detectedAt   DateTime    @default(now())
 
   settlement Settlement?
+
+  @@index([linkId])
 }
 
 model Settlement {
