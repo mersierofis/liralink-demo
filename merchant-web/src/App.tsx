@@ -1,29 +1,44 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-import { Toaster } from '@/components/ui/sonner'
 
-// Pages are added in the following build steps (03-MERCHANT-WEB.md):
-// step 2 = auth + AppShell, step 3 = Links + Link detail, step 4 = Dashboard/Payments,
-// step 5 = Withdrawals/Settings. Placeholder below only proves the scaffold boots.
-function Placeholder({ title }: { title: string }) {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-      <div className="text-center">
-        <h1 className="text-2xl font-semibold">LiraLink — merchant-web</h1>
-        <p className="mt-2 text-muted-foreground">{title}</p>
-      </div>
-    </div>
-  )
-}
+import { Toaster } from '@/components/ui/sonner'
+import { AuthProvider } from '@/auth/AuthProvider'
+import { RequireAuth } from '@/auth/RequireAuth'
+import { AppShell } from '@/layout/AppShell'
+import LoginPage from '@/pages/Login'
+import RegisterPage from '@/pages/Register'
+import DashboardPage from '@/pages/Dashboard'
+import LinksPage from '@/pages/Links'
+import PaymentsPage from '@/pages/Payments'
+import WithdrawalsPage from '@/pages/Withdrawals'
+import SettingsPage from '@/pages/Settings'
 
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<Placeholder title="Login — coming in step 2" />} />
-        <Route path="/" element={<Placeholder title="Dashboard — coming in step 4" />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-      <Toaster />
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route
+            path="/*"
+            element={
+              <RequireAuth>
+                <AppShell>
+                  <Routes>
+                    <Route path="/" element={<DashboardPage />} />
+                    <Route path="/links" element={<LinksPage />} />
+                    <Route path="/payments" element={<PaymentsPage />} />
+                    <Route path="/withdrawals" element={<WithdrawalsPage />} />
+                    <Route path="/settings" element={<SettingsPage />} />
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                </AppShell>
+              </RequireAuth>
+            }
+          />
+        </Routes>
+        <Toaster />
+      </AuthProvider>
     </BrowserRouter>
   )
 }
