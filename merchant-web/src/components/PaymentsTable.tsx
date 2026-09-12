@@ -32,8 +32,30 @@ export function PaymentsTable({ payments }: { payments: PaymentListItem[] }) {
               <p className="font-mono text-xs text-muted-foreground">{payment.link.code}</p>
             </TableCell>
             <TableCell>{formatUSDC(payment.amountUSDC)}</TableCell>
-            <TableCell>{payment.settlement ? `${Number(payment.settlement.fxRate).toFixed(2)}` : '—'}</TableCell>
-            <TableCell>{payment.settlement ? formatTRY(payment.settlement.amountTRY) : '—'}</TableCell>
+            <TableCell>
+              {payment.settlement ? (
+                Number(payment.settlement.fxRate).toFixed(2)
+              ) : (
+                <span
+                  className="text-sm italic text-muted-foreground"
+                  title="Partial payment towards this link — settled together with the payment that completed it"
+                >
+                  folded in
+                </span>
+              )}
+            </TableCell>
+            <TableCell>
+              {payment.settlement ? (
+                formatTRY(payment.settlement.amountTRY)
+              ) : (
+                <span
+                  className="text-sm italic text-muted-foreground"
+                  title="Partial payment towards this link — settled together with the payment that completed it"
+                >
+                  folded in
+                </span>
+              )}
+            </TableCell>
             <TableCell>
               <SettlementStatusBadge status={payment.settlement?.status ?? null} />
             </TableCell>
