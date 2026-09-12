@@ -123,9 +123,20 @@ model Settlement {
   savedUSDC   Decimal      @default(0) @db.Decimal(20, 7)
   provider    String
   status      SettleStatus @default(pending)
+  // mock: mock-settle-…; sep24: the anchor's transaction id
   anchorRef   String?
   createdAt   DateTime     @default(now())
   completedAt DateTime?
+
+  // sep24 progress. interactiveUrl = the anchor's interactive (KYC) page.
+  interactiveUrl String?
+  // Why a `pending` settlement can't proceed yet (outside_anchor_limits | missing_iban |
+  // anchor_withdraw_disabled); the minute job retries it.
+  blockedReason  String?
+  // USDC payment platform → anchor. The signed XDR is persisted BEFORE submitting, so a retry
+  // resubmits the same transaction instead of sending the USDC twice.
+  anchorTxHash   String?
+  anchorTxXdr    String?
 }
 
 model Withdrawal {
