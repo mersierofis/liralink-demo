@@ -125,8 +125,8 @@ export default function SettingsPage() {
                     </FormDescription>
                     {field.value > 0 && (
                       <p className="text-xs text-muted-foreground">
-                        Held by LiraLink until you request a transfer — sending USDC to your own
-                        wallet is coming soon.
+                        Kept as USDC in LiraLink's custody — there's no way to withdraw it to your
+                        own wallet yet.
                       </p>
                     )}
                     <FormMessage />

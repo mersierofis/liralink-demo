@@ -58,7 +58,9 @@ export function BalanceCard({
             <p className="font-medium" title={formatUSDCFull(balance.savedUSDC)}>
               {formatUSDC(balance.savedUSDC)}
             </p>
-            <p className="text-xs text-muted-foreground">Held by LiraLink until you request a transfer</p>
+            <p className="text-xs text-muted-foreground">
+              Held in LiraLink's custody — there's no way to withdraw this yet
+            </p>
           </div>
         )}
         {unallocatedUSDC.gt(0) && (
