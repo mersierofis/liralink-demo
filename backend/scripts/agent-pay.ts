@@ -74,15 +74,14 @@ async function main(): Promise<void> {
   const paid = await payingFetch(url);
   const body = await paid.text();
   console.log(`${paid.status} after ${Date.now() - started} ms`);
-  if (paid.status !== 200) {
+  if (paid.status === 202) {
+    // The facilitator timed out settling; the backend reconciles it — wait on the link status.
+    console.log(`Settlement pending: ${body}`);
+  } else if (paid.status !== 200) {
     throw new Error(`Payment was not accepted: ${body}`);
+  } else {
+    console.log(JSON.stringify(JSON.parse(body), null, 2));
   }
-  const receipt = JSON.parse(body) as {
-    credit: string;
-    linkStatus: string;
-    payment: { txHash: string; explorerUrl: string; amountUSDC: string } | null;
-  };
-  console.log(JSON.stringify(receipt, null, 2));
   const header = paid.headers.get('PAYMENT-RESPONSE');
   if (header) {
     const settle = decodePaymentResponseHeader(header);

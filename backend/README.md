@@ -87,8 +87,12 @@ Be honest about what this is:
   a memo; the Horizon listener never sees these transfers (it watches classic payments only).
 - **Exact amount.** The agent pays exactly what is due; a quote that changes between the 402 and the
   retry is rejected (`payment_requirements_mismatch`) and the agent retries with fresh requirements.
-- **Not covered by automated tests yet** — verified by one real testnet run (see the PR). A settle
-  that times out at the facilitator is logged as "outcome unknown" and not reconciled automatically.
+- **Settle timeouts.** If the facilitator times out settling, the agent gets `202` and an
+  `X402Settlement` row stays `pending`; every minute the backend looks for the transfer on Horizon,
+  retries the settle while the signed auth entries are valid (~60 s), and fails the row once they
+  expired with nothing on-chain.
+- **Tests:** unit tests with a faked facilitator + Horizon (`src/pay/x402.service.spec.ts`) plus
+  one real testnet run (see the PR); no e2e against the live facilitator.
 
 Skill used: `skills/agentic-payments/` (vendored from `stellar/stellar-dev-skill`, see `SOURCE.md`).
 

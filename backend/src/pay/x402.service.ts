@@ -1,17 +1,23 @@
 import {
   ConflictException,
+  Inject,
   Injectable,
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { Horizon } from '@stellar/stellar-sdk';
 import {
   decodePaymentSignatureHeader,
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
 } from '@x402/core/http';
-import { HTTPFacilitatorClient, x402ResourceServer } from '@x402/core/server';
+import {
+  FacilitatorTimeoutError,
+  x402ResourceServer,
+  type FacilitatorClient,
+} from '@x402/core/server';
 import type {
   PaymentPayload,
   PaymentRequired,
@@ -22,6 +28,7 @@ import type {
 import { ExactStellarScheme } from '@x402/stellar/exact/server';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Decimal } from '../common/decimal';
+import { Prisma, X402Settlement } from '../generated/prisma/client';
 import { PaymentResponseDto } from '../payments/dto/payment-response.dto';
 import { PaymentsService } from '../payments/payments.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -34,14 +41,22 @@ import {
 import { StellarService } from '../stellar/stellar.service';
 import { PayService } from './pay.service';
 
+/** The facilitator client, or null when x402 is disabled (see PayModule). */
+export const X402_FACILITATOR = Symbol('X402_FACILITATOR');
+
 // The x402.org facilitator serves stellar:testnet only — no pubnet entry in its /supported.
-const X402_NETWORK = 'stellar:testnet';
+export const X402_NETWORK = 'stellar:testnet';
 // Auth entries expire ~1 min after signing (latestLedger + 12); don't advertise longer.
 const MAX_TIMEOUT_SECONDS = 60;
 const USDC_UNITS = new Decimal(10_000_000);
 // Horizon ingests the settled transaction a few seconds after the facilitator returns.
 const HORIZON_CONFIRM_ATTEMPTS = 15;
 const HORIZON_CONFIRM_DELAY_MS = 1_000;
+// A pending settlement is failed only this long after its auth entries expired — by then a late
+// settlement has long been ingested by Horizon, and the entries can no longer be submitted.
+const PENDING_GRACE_MS = 2 * 60_000;
+// How far back the reconcile job scans the platform account's payments for a late settlement.
+const RECONCILE_SCAN_LIMIT = 200;
 
 export interface AgentReceipt {
   code: string;
@@ -56,8 +71,19 @@ export interface AgentReceipt {
   payment: PaymentResponseDto | null;
 }
 
+/** 202: the facilitator timed out settling — outcome unknown, reconciled by the minute job. */
+export interface AgentPending {
+  code: string;
+  status: 'pending';
+  x402SettlementId: string;
+  rail: 'x402';
+  network: string;
+  facilitator: string;
+}
+
 export type AgentPayResult =
   | { status: 402; body: PaymentRequired; headers: Record<string, string> }
+  | { status: 202; body: AgentPending; headers: Record<string, string> }
   | { status: 200; body: AgentReceipt; headers: Record<string, string> };
 
 /**
@@ -71,6 +97,7 @@ export class X402Service {
   private readonly logger = new Logger(X402Service.name);
   private readonly resourceServer: x402ResourceServer | null;
   private initializing: Promise<void> | null = null;
+  private reconciling = false;
   private readonly usdcSac: string;
   private readonly matchConfig: MatchConfig;
   readonly facilitatorUrl: string;
@@ -81,15 +108,14 @@ export class X402Service {
     private readonly paymentsService: PaymentsService,
     private readonly payService: PayService,
     config: ConfigService,
+    @Inject(X402_FACILITATOR) facilitator: FacilitatorClient | null,
   ) {
     this.facilitatorUrl = config.get<string>('X402_FACILITATOR_URL')!;
-    const enabled =
-      this.facilitatorUrl !== '' &&
-      config.get<string>('STELLAR_NETWORK') === 'testnet';
-    this.resourceServer = enabled
-      ? new x402ResourceServer(
-          new HTTPFacilitatorClient({ url: this.facilitatorUrl }),
-        ).register(X402_NETWORK, new ExactStellarScheme())
+    this.resourceServer = facilitator
+      ? new x402ResourceServer(facilitator).register(
+          X402_NETWORK,
+          new ExactStellarScheme(),
+        )
       : null;
     this.usdcSac = stellarService.usdcAsset.contractId(
       config.get<string>('NETWORK_PASSPHRASE')!,
@@ -167,8 +193,11 @@ export class X402Service {
     try {
       settlement = await server.settlePayment(payload, matched);
     } catch (err) {
+      if (err instanceof FacilitatorTimeoutError) {
+        return this.pending(link.code, payload, matched, verified.payer, err);
+      }
       this.logger.error(
-        `x402 settle for ${link.code} threw (outcome unknown — check the payer's account)`,
+        `x402 settle for ${link.code} failed`,
         err instanceof Error ? err.stack : String(err),
       );
       return this.paymentRequired(requirements, resource, 'settle_failed');
@@ -192,36 +221,200 @@ export class X402Service {
     };
   }
 
+  /**
+   * Resolves settlements whose facilitator call timed out. Each minute, per pending row: (1) look
+   * for the transfer on Horizon — the facilitator may have settled after all; (2) otherwise, while
+   * the auth entries are still valid, retry the settle; (3) once they have expired (plus a grace for
+   * Horizon ingestion) with nothing on-chain, fail it — the payer's USDC never moved.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async reconcilePending(): Promise<void> {
+    if (this.reconciling || !this.resourceServer) return;
+    this.reconciling = true;
+    try {
+      const pending = await this.prisma.x402Settlement.findMany({
+        where: { status: 'pending' },
+        orderBy: { createdAt: 'asc' },
+      });
+      for (const row of pending) {
+        try {
+          await this.reconcileOne(row);
+        } catch (err) {
+          this.logger.error(
+            `x402 settlement ${row.id} reconcile attempt failed, will retry`,
+            err instanceof Error ? err.stack : String(err),
+          );
+        }
+      }
+    } finally {
+      this.reconciling = false;
+    }
+  }
+
+  private async reconcileOne(row: X402Settlement): Promise<void> {
+    const found = await this.findLateSettlement(row);
+    if (found) {
+      await this.creditPending(row, {
+        success: true,
+        transaction: found,
+        network: X402_NETWORK,
+        payer: row.payer ?? undefined,
+      });
+      return;
+    }
+
+    const now = Date.now();
+    if (now < row.expiresAt.getTime()) {
+      const server = await this.server();
+      await this.prisma.x402Settlement.update({
+        where: { id: row.id },
+        data: { attempts: { increment: 1 } },
+      });
+      let settlement: SettleResponse;
+      try {
+        settlement = await server.settlePayment(
+          row.paymentPayload as unknown as PaymentPayload,
+          row.requirements as unknown as PaymentRequirements,
+        );
+      } catch (err) {
+        await this.prisma.x402Settlement.update({
+          where: { id: row.id },
+          data: { lastError: err instanceof Error ? err.message : String(err) },
+        });
+        return;
+      }
+      if (settlement.success) {
+        await this.creditPending(row, settlement);
+      } else {
+        // e.g. the entries were already consumed by the timed-out call — the next scan finds it.
+        await this.prisma.x402Settlement.update({
+          where: { id: row.id },
+          data: { lastError: settlement.errorReason ?? 'settle_failed' },
+        });
+      }
+      return;
+    }
+
+    if (now > row.expiresAt.getTime() + PENDING_GRACE_MS) {
+      await this.prisma.x402Settlement.update({
+        where: { id: row.id },
+        data: { status: 'failed', failReason: 'not_settled_before_expiry' },
+      });
+      this.logger.warn(
+        `x402 settlement ${row.id} for ${row.linkCode} failed: auth entries expired, no transfer on-chain`,
+      );
+    }
+  }
+
+  private async creditPending(
+    row: X402Settlement,
+    settlement: SettleResponse,
+  ): Promise<void> {
+    try {
+      await this.credit(row.linkCode, settlement);
+    } catch (err) {
+      // Already credited (e.g. by a concurrent request) — the settlement is done either way.
+      if (!(err instanceof ConflictException)) throw err;
+    }
+    await this.prisma.x402Settlement.update({
+      where: { id: row.id },
+      data: { status: 'settled', txHash: settlement.transaction },
+    });
+    this.logger.log(
+      `x402 settlement ${row.id} for ${row.linkCode} reconciled: tx ${settlement.transaction}`,
+    );
+  }
+
+  /** A transfer payer → platform of exactly the pending amount, on or after the pending row, not
+   * yet credited. Needs the payer (from verify) — without it any same-amount transfer would match. */
+  private async findLateSettlement(
+    row: X402Settlement,
+  ): Promise<string | null> {
+    if (!row.payer) return null;
+    const page = await this.stellarService.server
+      .payments()
+      .forAccount(this.matchConfig.platformAddress)
+      .order('desc')
+      .limit(RECONCILE_SCAN_LIMIT)
+      .call();
+    const since = row.createdAt.getTime() - MAX_TIMEOUT_SECONDS * 1_000;
+    for (const record of page.records) {
+      if (
+        record.type !==
+          Horizon.HorizonApi.OperationResponseType.invokeHostFunction ||
+        new Date(record.created_at).getTime() < since
+      ) {
+        continue;
+      }
+      const transfer = record.asset_balance_changes.some(
+        (c) =>
+          c.type === 'transfer' &&
+          c.from === row.payer &&
+          c.to === this.matchConfig.platformAddress &&
+          c.asset_code === this.matchConfig.assetCode &&
+          c.asset_issuer === this.matchConfig.assetIssuer &&
+          new Decimal(c.amount).equals(row.amountUSDC),
+      );
+      if (!transfer) continue;
+      const credited = await this.prisma.payment.findUnique({
+        where: { txHash: record.transaction_hash },
+      });
+      if (!credited) return record.transaction_hash;
+    }
+    return null;
+  }
+
+  private async pending(
+    code: string,
+    payload: PaymentPayload,
+    requirements: PaymentRequirements,
+    payer: string | undefined,
+    err: FacilitatorTimeoutError,
+  ): Promise<AgentPayResult> {
+    const row = await this.prisma.x402Settlement.create({
+      data: {
+        linkCode: code,
+        payer: payer ?? null,
+        amountUSDC: new Decimal(requirements.amount).div(USDC_UNITS),
+        paymentPayload: payload as unknown as Prisma.InputJsonValue,
+        requirements: requirements as unknown as Prisma.InputJsonValue,
+        lastError: err.message,
+        expiresAt: new Date(
+          Date.now() + requirements.maxTimeoutSeconds * 1_000,
+        ),
+      },
+    });
+    this.logger.warn(
+      `x402 settle for ${code} timed out — outcome unknown, x402 settlement ${row.id} pending (reconciled every minute)`,
+    );
+    return {
+      status: 202,
+      body: {
+        code,
+        status: 'pending',
+        x402SettlementId: row.id,
+        rail: 'x402',
+        network: X402_NETWORK,
+        facilitator: this.facilitatorUrl,
+      },
+      headers: {},
+    };
+  }
+
   /** Reads the settled transaction back from Horizon — the facilitator's word alone never
-   * credits anything — and routes it through the matcher. Idempotent on the tx hash. */
+   * credits anything — and routes it through the matcher. A tx hash is credited once: a replay
+   * is a 409. */
   private async credit(
     code: string,
     settlement: SettleResponse,
   ): Promise<AgentReceipt> {
     const txHash = settlement.transaction;
     const { tx, op } = await this.readTransfer(txHash);
-    const receipt = (
-      credit: string,
-      linkStatus: string,
-      reason?: string,
-    ): AgentReceipt => ({
-      code,
-      linkStatus,
-      rail: 'x402',
-      network: X402_NETWORK,
-      facilitator: this.facilitatorUrl,
-      credit,
-      reason,
-      settlement,
-      payment: null,
-    });
 
-    const opId = `x402:${txHash}`;
-    if (await this.paymentsService.markProcessed(opId)) {
-      const link = await this.prisma.paymentLink.findUniqueOrThrow({
-        where: { code },
-      });
-      return receipt('already_processed', link.status);
+    if (await this.paymentsService.markProcessed(`x402:${txHash}`)) {
+      throw new ConflictException(
+        `Transaction ${txHash} was already processed`,
+      );
     }
 
     const link = await this.prisma.paymentLink.findUniqueOrThrow({
@@ -246,11 +439,14 @@ export class X402Service {
       where: { txHash },
     });
     return {
-      ...receipt(
-        result.kind,
-        after.status,
-        'reason' in result ? result.reason : undefined,
-      ),
+      code,
+      linkStatus: after.status,
+      rail: 'x402',
+      network: X402_NETWORK,
+      facilitator: this.facilitatorUrl,
+      credit: result.kind,
+      reason: 'reason' in result ? result.reason : undefined,
+      settlement,
       payment: payment ? PaymentResponseDto.fromEntity(payment) : null,
     };
   }
@@ -295,20 +491,22 @@ export class X402Service {
     return { tx: tx!, op };
   }
 
-  private paymentRequired(
+  private async paymentRequired(
     requirements: PaymentRequirements,
     resource: ResourceInfo,
     error?: string,
   ): Promise<AgentPayResult> {
-    return this.server()
-      .then((server) =>
-        server.createPaymentRequiredResponse([requirements], resource, error),
-      )
-      .then((body) => ({
-        status: 402 as const,
-        body,
-        headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(body) },
-      }));
+    const server = await this.server();
+    const body = await server.createPaymentRequiredResponse(
+      [requirements],
+      resource,
+      error,
+    );
+    return {
+      status: 402,
+      body,
+      headers: { 'PAYMENT-REQUIRED': encodePaymentRequiredHeader(body) },
+    };
   }
 
   /** The resource server, after it has loaded the facilitator's /supported kinds once. */

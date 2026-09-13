@@ -26,7 +26,8 @@ export class PayController {
     private readonly x402Service: X402Service,
   ) {}
 
-  /** x402: 402 with payment requirements, or 200 with a receipt once PAYMENT-SIGNATURE settles. */
+  /** x402: 402 with payment requirements, 200 with a receipt once PAYMENT-SIGNATURE settles, or
+   * 202 pending when the facilitator timed out settling (reconciled by the minute job). */
   @Get(':code/agent')
   async agent(
     @Param('code') code: string,

@@ -163,6 +163,36 @@ model Withdrawal {
   completedAt DateTime?
 }
 
+enum X402SettleStatus {
+  pending
+  settled
+  failed
+}
+
+// An x402 settle whose facilitator call timed out (outcome unknown). The minute job looks for the
+// transfer on Horizon, retries the settle while the signed auth entries are valid (`expiresAt`),
+// and fails the row once they expired with nothing on-chain. Settled rows keep the tx hash.
+model X402Settlement {
+  id             String           @id @default(uuid())
+  linkCode       String
+  // From the facilitator's verify — needed to recognise a late transfer on Horizon.
+  payer          String?
+  amountUSDC     Decimal          @db.Decimal(20, 7)
+  paymentPayload Json
+  requirements   Json
+  status         X402SettleStatus @default(pending)
+  attempts       Int              @default(0)
+  txHash         String?
+  // not_settled_before_expiry
+  failReason     String?
+  lastError      String?
+  expiresAt      DateTime
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([status])
+}
+
 // Idempotency for the Horizon payment listener — one row per processed operation id.
 model ProcessedOperation {
   opId        String   @id
