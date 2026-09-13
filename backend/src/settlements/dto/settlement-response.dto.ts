@@ -1,3 +1,4 @@
+import { sep24Phase } from '../../anchor/sep24';
 import { Settlement } from '../../generated/prisma/client';
 
 /** Matches `Settlement` in docs/api.types.ts. */
@@ -15,6 +16,7 @@ export class SettlementResponseDto {
   status: string;
   anchorRef?: string;
   failReason: string | null; // set only when status is 'failed'
+  interactiveUrl: string | null; // the anchor's KYC form — set only while it waits for the merchant
   createdAt: string;
   completedAt?: string;
 
@@ -41,6 +43,13 @@ export class SettlementResponseDto {
     dto.anchorRef = settlement.anchorRef ?? undefined;
     dto.failReason =
       settlement.status === 'failed' ? (settlement.failReason ?? null) : null;
+    const awaitingMerchant =
+      settlement.status === 'processing' &&
+      settlement.anchorStatus !== null &&
+      sep24Phase(settlement.anchorStatus) === 'interactive';
+    dto.interactiveUrl = awaitingMerchant
+      ? (settlement.interactiveUrl ?? null)
+      : null;
     dto.createdAt = settlement.createdAt.toISOString();
     dto.completedAt = settlement.completedAt?.toISOString();
     return dto;

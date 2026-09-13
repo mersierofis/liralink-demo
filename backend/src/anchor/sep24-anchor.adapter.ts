@@ -101,6 +101,14 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
     const followUntil = Date.now() + FOLLOW_FOR_MS;
     for (;;) {
       const txn = await this.getTransaction(ref);
+      if (txn.status !== state.anchorStatus) {
+        await persist({ anchorStatus: txn.status });
+        if (sep24Phase(txn.status) === 'interactive' && !this.testKycUrl) {
+          this.logger.log(
+            `Settlement ${state.id}: withdraw ${ref} waits for the merchant to complete interactiveUrl`,
+          );
+        }
+      }
       switch (sep24Phase(txn.status)) {
         case 'completed': {
           const usdcAsset = `stellar:${this.usdc.getCode()}:${this.usdc.getIssuer()}`;
@@ -126,7 +134,9 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
           };
         case 'interactive':
           if (!this.testKycUrl) {
-            // A real anchor: the merchant completes KYC at interactiveUrl; resumed every minute.
+            // A real anchor: the merchant completes KYC at interactiveUrl (exposed while
+            // anchorStatus is incomplete). Nothing to do until then — the minute job checks once
+            // per run and resumes as soon as the anchor moves on. Not an error, never a failure.
             return { status: 'processing', ref };
           }
           await this.submitTestKyc(state, merchant);

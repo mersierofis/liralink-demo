@@ -135,6 +135,9 @@ model Settlement {
 
   // sep24 progress. interactiveUrl = the anchor's interactive (KYC) page.
   interactiveUrl String?
+  // Last SEP-24 transaction status seen (incomplete, pending_user_transfer_start, …). While it is
+  // `incomplete` at a real anchor, the merchant still has to complete interactiveUrl.
+  anchorStatus   String?
   // Why a `pending` settlement can't proceed yet (outside_anchor_limits | missing_iban |
   // anchor_withdraw_disabled); the minute job retries it.
   blockedReason  String?

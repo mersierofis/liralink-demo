@@ -184,7 +184,7 @@ const IBAN = 'TR330006100519786457841326';
       paidOutTRY: '30.60',
     });
 
-    // SEP-24 internals are not exposed.
+    // SEP-24 internals are not exposed; interactiveUrl only while the anchor waits for the merchant.
     const list = await auth(http().get('/api/settlements')).expect(200);
     const item = (list.body.items as Record<string, unknown>[]).find(
       (i) => i.id === s.id,
@@ -195,8 +195,9 @@ const IBAN = 'TR330006100519786457841326';
       anchorRef: s.anchorRef,
       feeUSDC: '0.1000000',
       netTRY: '30.60',
+      interactiveUrl: null,
     });
-    expect(item).not.toHaveProperty('interactiveUrl');
+    expect(item).not.toHaveProperty('anchorStatus');
     expect(item).not.toHaveProperty('anchorTxXdr');
   });
 });
