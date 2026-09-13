@@ -63,11 +63,12 @@ export function decodeMemoCode(memoBytes: string): string {
   return Buffer.from(memoBytes, 'base64').toString('utf8').trim().toUpperCase();
 }
 
-export function match(
+/** The success + destination + asset half of `match` — also used by the x402 rail, where the
+ * link comes from the request URL (a Soroban transaction carries no memo). Null = acceptable. */
+export function checkTransfer(
   op: InboundOp,
-  link: LinkForMatch | null,
   cfg: MatchConfig,
-): MatchResult {
+): Extract<MatchResult, { kind: 'ignored' }> | null {
   if (!op.successful)
     return { kind: 'ignored', reason: 'transaction not successful' };
   if (op.to !== cfg.platformAddress)
@@ -79,6 +80,16 @@ export function match(
   ) {
     return { kind: 'ignored', reason: 'wrong asset' };
   }
+  return null;
+}
+
+export function match(
+  op: InboundOp,
+  link: LinkForMatch | null,
+  cfg: MatchConfig,
+): MatchResult {
+  const rejected = checkTransfer(op, cfg);
+  if (rejected) return rejected;
   if (op.memoType !== 'text' || !op.memoBytes) {
     return { kind: 'ignored', reason: 'missing or non-text memo' };
   }

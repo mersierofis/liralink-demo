@@ -33,6 +33,13 @@ export const envSchema = z.object({
 
   LINK_DEFAULT_EXPIRY_HOURS: z.coerce.number().positive().default(24),
   QUOTE_TTL_MINUTES: z.coerce.number().positive().default(10),
+
+  // x402 rail (GET /pay/:code/agent). The x402.org facilitator serves stellar:testnet only; empty
+  // (or STELLAR_NETWORK=public) disables the route with 503.
+  X402_FACILITATOR_URL: z
+    .string()
+    .optional()
+    .default('https://x402.org/facilitator'),
 });
 
 export type Env = z.infer<typeof envSchema>;

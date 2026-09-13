@@ -23,6 +23,7 @@ enum LinkStatus {
 enum PayRail {
   contract
   memo
+  x402
 }
 
 enum SettleStatus {
