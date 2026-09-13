@@ -24,6 +24,23 @@ stellar keys secret platform     # paste into .env as PLATFORM_ACCOUNT_SECRET
 
 The USDC trustline is established automatically on startup if missing (`StellarService.onModuleInit`) — no manual step needed.
 
+## Deploying
+
+**A merge to master is a deploy** (team agreement). The live API
+(`https://liralink-api.tutorialplatform.com`, systemd `liralink-api`) runs from the master checkout
+on the EC2 host; right after a merge, run `scripts/deploy.sh` there. It refuses to run off master,
+then does:
+
+```
+git pull --ff-only
+npm ci
+npx prisma migrate deploy       # + npx prisma generate (Prisma 7 migrate doesn't regenerate the client)
+npm run build                   # entrypoint is dist/src/main.js — `npm run start:prod` is stale
+sudo systemctl restart liralink-api
+```
+
+and waits for `/api/health`. Migrations must stay additive/nullable — they run against live data.
+
 ## Architecture
 
 ```

@@ -52,6 +52,9 @@ docker-compose.yml   Postgres 16 for local dev (localhost:5433)
 - **Money is always a decimal string** in transport (TRY 2 dp, USDC 7 dp). Never a JS `number`. No UI math.
 - **Every screen** has loading, empty, and error states. **Log every Stellar tx hash** you create/detect.
 - **Small PRs into `main`; another teammate reviews.** CI per app: `npm run lint && typecheck && test`.
+- **Merge to master = deploy.** Right after a merge, `backend/scripts/deploy.sh` runs on the EC2 host
+  (see `backend/README.md` → *Deploying*). Frontends must tolerate an older backend (unknown/missing
+  fields → neutral UI, never a wrong state). A GitHub Action will automate this later.
 - English for UI strings, code, comments, commit messages.
 
 ## Toolchain pins (binding — see `00-PROJECT.md` §8)
