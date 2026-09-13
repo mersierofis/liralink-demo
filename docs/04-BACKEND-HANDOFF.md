@@ -43,6 +43,7 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
 | GET | `/settlements?page=&limit=` | Bearer | `{ items: Settlement[], total }` |
 | POST | `/withdrawals` | Bearer | `201 Withdrawal` (`{ amountTRY, iban? }`) |
 | GET | `/withdrawals?page=&limit=` | Bearer | `{ items: Withdrawal[], total }` |
+| GET | `/unallocated?page=&limit=` | Bearer | `{ items: UnallocatedCredit[], total }` |
 
 - When a link is paid, a `Settlement` appears as `pending`/`processing` (counted in `pendingTRY`) and
   moves to `completed` a few seconds later — only then does `availableTRY` grow. Poll `/balance`
@@ -75,6 +76,11 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
   `interactiveUrl` — the anchor's KYC / bank-details page, waiting for the merchant. It is non-null
   only while the anchor waits; once the form is done the settlement resumes on its own (within about a
   minute) and `interactiveUrl` goes back to `null`. It is always `null` on the mock anchor (live today).
+- **`GET /unallocated`** explains `unallocatedUSDC`: one row per credit, newest first, and the rows
+  of all pages sum to it. `source: 'stray'` = a payment to a link that was already paid, expired or
+  cancelled (the whole amount); `'overpaid'` = the excess over `quotedUSDC` on the payment that
+  completed a link. `reason` is human-readable text for a detail column, not an enum. The demo
+  merchant has two rows: a 2.0 stray (VHHCJ8QZ) and a 1.0 overpayment (WPQRQDT4).
 
 ---
 
@@ -185,6 +191,10 @@ npm run start:dev             # http://localhost:3000 , Swagger at /docs
       button disappears by itself. A missing field (older backend) means `null`: no button.
       The link carries a short-lived anchor token (testanchor: 15 min from when the settlement
       starts) — surface the button prominently (e.g. a dashboard banner), not only deep in a table.
+- [ ] **Unallocated USDC detail:** when `Balance.unallocatedUSDC > 0`, link the dashboard figure to
+      a list from `GET /unallocated`. Columns: date, source ("Stray payment" / "Overpayment"), link
+      code, amount (USDC), reason, and the tx hash linked to `explorerUrl`. Needs an empty state
+      (0 rows ⇔ `"0.0000000"`) and pagination (`page`, `limit` ≤ 100).
 - [ ] Settings: "Change password" form → `PATCH /me { currentPassword, newPassword }` (≥ 8 chars).
       `400` if one field is missing, `403` wrong current password.
 - [ ] Demo account `demo@liralink.app` — the password is not in the repo any more: ask Hasan.
