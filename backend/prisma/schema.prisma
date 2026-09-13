@@ -175,8 +175,12 @@ enum X402SettleStatus {
 model X402Settlement {
   id             String           @id @default(uuid())
   linkCode       String
-  // From the facilitator's verify — needed to recognise a late transfer on Horizon.
+  // From the facilitator's verify — informational only, never used to match a transfer.
   payer          String?
+  // sha256 of the payer-signed Soroban auth entries in the payload. The facilitator rebuilds the
+  // transaction (own source + fee bump), so the tx hash isn't known before settle — but it copies
+  // these entries verbatim, and their nonce lands on-chain once. Reconcile matches only on this.
+  authEntriesHash String?
   amountUSDC     Decimal          @db.Decimal(20, 7)
   paymentPayload Json
   requirements   Json

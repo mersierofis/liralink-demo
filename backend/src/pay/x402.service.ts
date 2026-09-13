@@ -7,7 +7,13 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Horizon } from '@stellar/stellar-sdk';
+import {
+  FeeBumpTransaction,
+  Horizon,
+  Transaction,
+  TransactionBuilder,
+  xdr,
+} from '@stellar/stellar-sdk';
 import {
   decodePaymentSignatureHeader,
   encodePaymentRequiredHeader,
@@ -26,6 +32,7 @@ import type {
   SettleResponse,
 } from '@x402/core/types';
 import { ExactStellarScheme } from '@x402/stellar/exact/server';
+import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Decimal } from '../common/decimal';
 import { Prisma, X402Settlement } from '../generated/prisma/client';
@@ -99,6 +106,7 @@ export class X402Service {
   private initializing: Promise<void> | null = null;
   private reconciling = false;
   private readonly usdcSac: string;
+  private readonly networkPassphrase: string;
   private readonly matchConfig: MatchConfig;
   readonly facilitatorUrl: string;
 
@@ -117,9 +125,8 @@ export class X402Service {
           new ExactStellarScheme(),
         )
       : null;
-    this.usdcSac = stellarService.usdcAsset.contractId(
-      config.get<string>('NETWORK_PASSPHRASE')!,
-    );
+    this.networkPassphrase = config.get<string>('NETWORK_PASSPHRASE')!;
+    this.usdcSac = stellarService.usdcAsset.contractId(this.networkPassphrase);
     this.matchConfig = {
       platformAddress: stellarService.platformPublicKey,
       assetCode: config.get<string>('USDC_CODE')!,
@@ -325,41 +332,38 @@ export class X402Service {
     );
   }
 
-  /** A transfer payer → platform of exactly the pending amount, on or after the pending row, not
-   * yet credited. Needs the payer (from verify) — without it any same-amount transfer would match. */
+  /** The on-chain transaction carrying this row's payer-signed auth entries, if it landed. Never
+   * matched by payer + amount: two stuck payments of the same amount from one payer would swap. An
+   * already-credited match is returned too — credit() then 409s and the row is marked settled. */
   private async findLateSettlement(
     row: X402Settlement,
   ): Promise<string | null> {
-    if (!row.payer) return null;
-    const page = await this.stellarService.server
+    if (!row.authEntriesHash) return null;
+    const horizon = this.stellarService.server;
+    const page = await horizon
       .payments()
       .forAccount(this.matchConfig.platformAddress)
       .order('desc')
       .limit(RECONCILE_SCAN_LIMIT)
       .call();
     const since = row.createdAt.getTime() - MAX_TIMEOUT_SECONDS * 1_000;
-    for (const record of page.records) {
-      if (
-        record.type !==
-          Horizon.HorizonApi.OperationResponseType.invokeHostFunction ||
-        new Date(record.created_at).getTime() < since
-      ) {
-        continue;
-      }
-      const transfer = record.asset_balance_changes.some(
-        (c) =>
-          c.type === 'transfer' &&
-          c.from === row.payer &&
-          c.to === this.matchConfig.platformAddress &&
-          c.asset_code === this.matchConfig.assetCode &&
-          c.asset_issuer === this.matchConfig.assetIssuer &&
-          new Decimal(c.amount).equals(row.amountUSDC),
+    const candidates = new Set(
+      page.records
+        .filter(
+          (r) =>
+            r.type ===
+              Horizon.HorizonApi.OperationResponseType.invokeHostFunction &&
+            new Date(r.created_at).getTime() >= since,
+        )
+        .map((r) => r.transaction_hash),
+    );
+    for (const txHash of candidates) {
+      const tx = await horizon.transactions().transaction(txHash).call();
+      const envelope = TransactionBuilder.fromXDR(
+        tx.envelope_xdr,
+        this.networkPassphrase,
       );
-      if (!transfer) continue;
-      const credited = await this.prisma.payment.findUnique({
-        where: { txHash: record.transaction_hash },
-      });
-      if (!credited) return record.transaction_hash;
+      if (authEntriesHash(envelope) === row.authEntriesHash) return txHash;
     }
     return null;
   }
@@ -371,10 +375,22 @@ export class X402Service {
     payer: string | undefined,
     err: FacilitatorTimeoutError,
   ): Promise<AgentPayResult> {
+    let authHash: string | null = null;
+    try {
+      authHash = authEntriesHash(
+        new Transaction(
+          (payload.payload as { transaction: string }).transaction,
+          this.networkPassphrase,
+        ),
+      );
+    } catch {
+      // Verified payloads always parse; without a hash the row can only be retried or failed.
+    }
     const row = await this.prisma.x402Settlement.create({
       data: {
         linkCode: code,
         payer: payer ?? null,
+        authEntriesHash: authHash,
         amountUSDC: new Decimal(requirements.amount).div(USDC_UNITS),
         paymentPayload: payload as unknown as Prisma.InputJsonValue,
         requirements: requirements as unknown as Prisma.InputJsonValue,
@@ -532,4 +548,21 @@ export class X402Service {
     }
     return server;
   }
+}
+
+/** sha256 over the XDR of the single invokeHostFunction op's auth entries — identical in the
+ * payer's signed payload and in the facilitator's rebuilt (possibly fee-bumped) transaction. */
+export function authEntriesHash(
+  tx: Transaction | FeeBumpTransaction,
+): string | null {
+  const inner = tx instanceof FeeBumpTransaction ? tx.innerTransaction : tx;
+  const [op] = inner.operations;
+  if (inner.operations.length !== 1 || op.type !== 'invokeHostFunction') {
+    return null;
+  }
+  const auth: xdr.SorobanAuthorizationEntry[] = op.auth ?? [];
+  if (auth.length === 0) return null;
+  const hash = createHash('sha256');
+  for (const entry of auth) hash.update(entry.toXDR());
+  return hash.digest('hex');
 }

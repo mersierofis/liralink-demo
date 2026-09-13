@@ -1,6 +1,16 @@
 import { ConflictException, Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
-import { Asset, Networks } from '@stellar/stellar-sdk';
+import {
+  Account,
+  Address,
+  Asset,
+  BASE_FEE,
+  Keypair,
+  Networks,
+  Operation,
+  TransactionBuilder,
+  xdr,
+} from '@stellar/stellar-sdk';
 import {
   decodePaymentRequiredHeader,
   encodePaymentSignatureHeader,
@@ -13,7 +23,7 @@ import type { PaymentsService } from '../payments/payments.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { StellarService } from '../stellar/stellar.service';
 import type { PayService } from './pay.service';
-import { X402_NETWORK, X402Service } from './x402.service';
+import { authEntriesHash, X402_NETWORK, X402Service } from './x402.service';
 
 const ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 const USDC_SAC = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA';
@@ -22,9 +32,77 @@ const PAYER = 'GBRZSG7K6ZXJRCMYM2O2HO2DKR7RO2ACZ5FARBMQZBB4YZMDFDXFUTV7';
 const TX = 'e05aaeecfa111be82332f346eed8a61bf24610dea9b2ed97ed829e5ea14535bc';
 const URL = 'http://localhost:3000/api/pay/L7QRCE4U/agent';
 
-const transfer = (amount = '0.1000000') => ({
+const OTHER_TX =
+  '9b1c0f3e2a4d5b6c7d8e9f00112233445566778899aabbccddeeff0011223344';
+
+/** A USDC transfer invocation whose auth entry the payer signed with `nonce` (signature faked). */
+function transferOp(nonce: string) {
+  const args = new xdr.InvokeContractArgs({
+    contractAddress: Address.fromString(USDC_SAC).toScAddress(),
+    functionName: 'transfer',
+    args: [],
+  });
+  return Operation.invokeHostFunction({
+    func: xdr.HostFunction.hostFunctionTypeInvokeContract(args),
+    auth: [
+      new xdr.SorobanAuthorizationEntry({
+        credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+          new xdr.SorobanAddressCredentials({
+            address: Address.fromString(PAYER).toScAddress(),
+            nonce: xdr.Int64.fromString(nonce),
+            signatureExpirationLedger: 1_000,
+            signature: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('sig')]),
+          }),
+        ),
+        rootInvocation: new xdr.SorobanAuthorizedInvocation({
+          function:
+            xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+              args,
+            ),
+          subInvocations: [],
+        }),
+      }),
+    ],
+  });
+}
+
+/** The payer's signed x402 payload transaction. */
+const payerTx = (nonce: string) =>
+  new TransactionBuilder(new Account(PAYER, '1'), {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(transferOp(nonce))
+    .setTimeout(60)
+    .build();
+
+/** What the facilitator submits: the same op rebuilt on its own account, fee-bumped — new hash. */
+function facilitatorEnvelope(nonce: string): string {
+  const facilitator = Keypair.random();
+  const inner = new TransactionBuilder(
+    new Account(facilitator.publicKey(), '42'),
+    {
+      fee: BASE_FEE,
+      networkPassphrase: Networks.TESTNET,
+    },
+  )
+    .addOperation(transferOp(nonce))
+    .setTimeout(60)
+    .build();
+  inner.sign(facilitator);
+  const bumped = TransactionBuilder.buildFeeBumpTransaction(
+    facilitator,
+    BASE_FEE,
+    inner,
+    Networks.TESTNET,
+  );
+  bumped.sign(facilitator);
+  return bumped.toXDR();
+}
+
+const transfer = (txHash = TX, amount = '0.1000000') => ({
   type: 'invoke_host_function',
-  transaction_hash: TX,
+  transaction_hash: txHash,
   created_at: new Date().toISOString(),
   asset_balance_changes: [
     {
@@ -81,12 +159,20 @@ function setup(linkStatus = 'open') {
       update: jest.fn().mockResolvedValue({}),
     },
   };
-  // What the reconcile job's scan of the platform account's payments returns.
-  const scan = { records: [] as unknown[] };
+  // What the reconcile job's scan of the platform account's payments returns, and the envelope
+  // Horizon holds per tx hash.
+  const scan = {
+    records: [] as unknown[],
+    envelopes: {} as Record<string, string>,
+  };
   const horizon = {
     transactions: () => ({
-      transaction: () => ({
-        call: jest.fn().mockResolvedValue({ successful: true, ledger_attr: 7 }),
+      transaction: (hash: string) => ({
+        call: jest.fn().mockResolvedValue({
+          successful: true,
+          ledger_attr: 7,
+          envelope_xdr: scan.envelopes[hash] ?? facilitatorEnvelope('1'),
+        }),
       }),
     }),
     operations: () => ({
@@ -140,7 +226,7 @@ async function paymentHeader(service: X402Service) {
   return encodePaymentSignatureHeader({
     x402Version: 2,
     accepted,
-    payload: { transaction: 'AAAA' },
+    payload: { transaction: payerTx('1').toXDR() },
   });
 }
 
@@ -254,11 +340,28 @@ describe('X402Service', () => {
         x402SettlementId: 'xs-1',
       });
       const [{ data }] = prisma.x402Settlement.create.mock.calls[0] as [
-        { data: { linkCode: string; payer: string; amountUSDC: Decimal } },
+        {
+          data: {
+            linkCode: string;
+            payer: string;
+            amountUSDC: Decimal;
+            authEntriesHash: string;
+          };
+        },
       ];
       expect(data.linkCode).toBe('L7QRCE4U');
       expect(data.payer).toBe(PAYER);
       expect(data.amountUSDC.toFixed(7)).toBe('0.1000000');
+      // Known before settle, and equal for the facilitator's rebuilt, fee-bumped transaction.
+      expect(data.authEntriesHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(data.authEntriesHash).toBe(
+        authEntriesHash(
+          TransactionBuilder.fromXDR(
+            facilitatorEnvelope('1'),
+            Networks.TESTNET,
+          ),
+        ),
+      );
       expect(payments.recordMatch).not.toHaveBeenCalled();
     });
 
@@ -267,6 +370,7 @@ describe('X402Service', () => {
         id: 'xs-1',
         linkCode: 'L7QRCE4U',
         payer: PAYER,
+        authEntriesHash: authEntriesHash(payerTx('1')),
         amountUSDC: new Decimal('0.1'),
         paymentPayload: { x402Version: 2, payload: {} },
         requirements: { amount: '1000000' },
@@ -276,10 +380,14 @@ describe('X402Service', () => {
       };
     }
 
-    it('reconcile: credits a transfer that landed on-chain after the timeout', async () => {
+    it('reconcile: credits the transaction carrying the signed auth entries after the timeout', async () => {
       const { service, facilitator, prisma, payments, scan } = setup();
       prisma.x402Settlement.findMany.mockResolvedValue([pendingRow(30_000)]);
-      scan.records = [transfer()];
+      scan.records = [transfer(OTHER_TX), transfer(TX)];
+      scan.envelopes = {
+        [OTHER_TX]: facilitatorEnvelope('2'),
+        [TX]: facilitatorEnvelope('1'),
+      };
 
       await service.reconcilePending();
 
@@ -319,6 +427,25 @@ describe('X402Service', () => {
       );
       expect(statuses).not.toContain('settled');
       expect(statuses).not.toContain('failed');
+    });
+
+    it('reconcile: never credits a same-payer, same-amount transfer with other auth entries', async () => {
+      const { service, facilitator, prisma, payments, scan } = setup();
+      prisma.x402Settlement.findMany.mockResolvedValue([
+        pendingRow(-3 * 60_000),
+      ]);
+      // Another stuck payment of this payer, same amount — a different signed nonce.
+      scan.records = [transfer(OTHER_TX)];
+      scan.envelopes = { [OTHER_TX]: facilitatorEnvelope('2') };
+
+      await service.reconcilePending();
+
+      expect(facilitator.settle).not.toHaveBeenCalled();
+      expect(payments.recordMatch).not.toHaveBeenCalled();
+      expect(prisma.x402Settlement.update).toHaveBeenCalledWith({
+        where: { id: 'xs-1' },
+        data: { status: 'failed', failReason: 'not_settled_before_expiry' },
+      });
     });
 
     it('reconcile: fails it once the entries expired (plus grace) with nothing on-chain', async () => {
