@@ -77,7 +77,7 @@ Each app has its own `package.json`. No shared workspace tooling needed; a copy 
 
 ```ts
 type LinkStatus   = 'open' | 'underpaid' | 'paid' | 'expired' | 'cancelled';
-type PayRail      = 'contract' | 'memo';       // 'contract' reserved for the Soroban invoice rail (phase 2, not yet built)
+type PayRail      = 'contract' | 'memo' | 'x402'; // 'contract' = Soroban invoice rail · 'x402' = agent paid GET /pay/:code/agent (testnet, x402.org facilitator)
 type SettleStatus = 'pending' | 'processing' | 'completed' | 'failed';
 type WdStatus     = 'requested' | 'processing' | 'completed' | 'failed';
 type SettlementMode = 'balance' | 'auto_payout'; // balance: TRY accrues, merchant withdraws (mock anchor) · auto_payout: the anchor pays the IBAN at settlement (sep24)
