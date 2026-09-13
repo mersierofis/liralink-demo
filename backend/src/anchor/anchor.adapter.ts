@@ -28,6 +28,7 @@ export interface SettlementAnchorState {
   amountUSDC: Decimal;
   anchorRef: string | null;
   interactiveUrl: string | null;
+  anchorStatus: string | null;
   anchorTxHash: string | null;
   anchorTxXdr: string | null;
 }
@@ -35,7 +36,11 @@ export interface SettlementAnchorState {
 export type AnchorSettlementPatch = Partial<
   Pick<
     SettlementAnchorState,
-    'anchorRef' | 'interactiveUrl' | 'anchorTxHash' | 'anchorTxXdr'
+    | 'anchorRef'
+    | 'interactiveUrl'
+    | 'anchorStatus'
+    | 'anchorTxHash'
+    | 'anchorTxXdr'
   >
 >;
 

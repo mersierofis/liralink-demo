@@ -132,6 +132,7 @@ interface Settlement {
   provider: 'mock' | 'sep24';
   status: SettleStatus; anchorRef?: string;
   failReason: SettleFailReason | null; // set only when status is 'failed' (see docs/anchor.md)
+  interactiveUrl: string | null; // sep24: the anchor's KYC page while it waits for the merchant ("Complete verification"); null otherwise
   createdAt: string; completedAt?: string;
 }
 

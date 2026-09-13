@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { Keypair } from '@stellar/stellar-sdk';
 import { Decimal } from '../common/decimal';
 import type { Merchant } from '../generated/prisma/client';
+import type { SettlementAnchorState } from './anchor.adapter';
 import type { Sep24Transaction } from './sep24';
 import { Sep24AnchorAdapter } from './sep24-anchor.adapter';
 
@@ -31,21 +32,74 @@ function adapterSeeing(txn: Sep24Transaction): Sep24AnchorAdapter {
   return adapter;
 }
 
-/** Resumes a settlement whose withdraw is already open and paid (anchorRef set). */
-function resume(adapter: Sep24AnchorAdapter) {
+/** Resumes a settlement whose withdraw is already open (anchorRef set) — by default also paid. */
+function resume(
+  adapter: Sep24AnchorAdapter,
+  settlement: Partial<SettlementAnchorState> = {},
+  save: jest.Mock = jest.fn(),
+) {
   return adapter.settleToTRY({
     settlement: {
       id: 's1',
       amountUSDC: new Decimal('1.0000000'),
       anchorRef: 'anchor-1',
       interactiveUrl: null,
+      anchorStatus: null,
       anchorTxHash: 'hash',
       anchorTxXdr: 'xdr',
+      ...settlement,
     },
     merchant: { iban: 'TR330006100519786457841326' } as Merchant,
-    save: jest.fn(),
+    save,
   });
 }
+
+describe('Sep24AnchorAdapter — interactive step at a real anchor (no test KYC URL)', () => {
+  const waiting = {
+    interactiveUrl: 'https://anchor.example/withdraw?token=t',
+    anchorTxHash: null,
+    anchorTxXdr: null,
+  };
+
+  it('stays processing, records anchorStatus once, and never fills the form itself', async () => {
+    const adapter = adapterSeeing({ id: 'anchor-1', status: 'incomplete' });
+    const submit = jest.spyOn(
+      adapter as unknown as { submitTestKyc(): Promise<void> },
+      'submitTestKyc',
+    );
+
+    const save = jest.fn();
+    expect(await resume(adapter, waiting, save)).toEqual({
+      status: 'processing',
+      ref: 'anchor-1',
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith({ anchorStatus: 'incomplete' });
+
+    // The next minute's run: nothing changed at the anchor → no write, still processing.
+    const again = jest.fn();
+    expect(
+      await resume(adapter, { ...waiting, anchorStatus: 'incomplete' }, again),
+    ).toEqual({ status: 'processing', ref: 'anchor-1' });
+    expect(again).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it('resumes once the anchor reports the form complete', async () => {
+    const save = jest.fn();
+    const result = await resume(
+      adapterSeeing({
+        id: 'anchor-1',
+        status: 'completed',
+        fee_details: { total: '0', asset: OUR_USDC },
+      }),
+      { interactiveUrl: waiting.interactiveUrl, anchorStatus: 'incomplete' },
+      save,
+    );
+    expect(save).toHaveBeenCalledWith({ anchorStatus: 'completed' });
+    expect(result).toMatchObject({ status: 'completed', ref: 'anchor-1' });
+  });
+});
 
 describe('Sep24AnchorAdapter — completed withdraw', () => {
   it('fails with unexpected_fee_asset when the fee is in another asset (returned, not thrown)', async () => {

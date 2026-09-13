@@ -71,6 +71,10 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
   `invalid_fee`, `anchor_status` or `amount_mismatch` (`null` on every other status). They are
   terminal (never retried) and count toward no balance; show "Settlement failed" with the reason —
   the platform reconciles them by hand.
+- **Verification step (sep24 at a real anchor):** a `processing` settlement can carry
+  `interactiveUrl` — the anchor's KYC / bank-details page, waiting for the merchant. It is non-null
+  only while the anchor waits; once the form is done the settlement resumes on its own (within about a
+  minute) and `interactiveUrl` goes back to `null`. It is always `null` on the mock anchor (live today).
 
 ---
 
@@ -174,6 +178,11 @@ npm run start:dev             # http://localhost:3000 , Swagger at /docs
       (the settlement's `netTRY` once `status === 'completed'`), and make the **Balance card show
       "Paid out TRY"** (`paidOutTRY`). In `'balance'` mode keep today's UI.
 - [ ] Show `netTRY` (not `amountTRY`) as the credited amount on settlements; show `feeUSDC` when `> 0`.
+- [ ] **"Complete verification" button** wherever a settlement shows (payments table row via
+      `PaymentListItem.settlement`, settlements list) when `settlement.interactiveUrl` is non-null:
+      open it in a new tab (`target="_blank" rel="noopener noreferrer"`) and label the row
+      "Verification needed" instead of "Processing". Keep polling (~10 s) while any row has it — the
+      button disappears by itself. A missing field (older backend) means `null`: no button.
 - [ ] Settings: "Change password" form → `PATCH /me { currentPassword, newPassword }` (≥ 8 chars).
       `400` if one field is missing, `403` wrong current password.
 - [ ] Demo account `demo@liralink.app` — the password is not in the repo any more: ask Hasan.

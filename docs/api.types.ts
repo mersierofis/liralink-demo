@@ -87,6 +87,10 @@ export interface Settlement {
   status: SettleStatus;
   anchorRef?: string;
   failReason: SettleFailReason | null; // set only when status is 'failed'
+  // sep24 at a real anchor: the anchor's KYC / bank-details page, waiting for the merchant — show a
+  // "Complete verification" button. Non-null only while status is 'processing' and the anchor waits;
+  // the settlement resumes by itself once the form is done. Treat a missing field as null.
+  interactiveUrl: string | null;
   createdAt: string;
   completedAt?: string;
 }

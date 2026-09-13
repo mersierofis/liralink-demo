@@ -43,9 +43,14 @@ auto-save).
    `{ asset_code: USDC, asset_issuer, account: <platform>, amount, lang: en }` →
    `{ id, url }`. Saved as `Settlement.anchorRef` / `interactiveUrl`. Status `incomplete`.
 5. **Interactive step (KYC + bank details).**
-   - *Real anchor:* a person completes `interactiveUrl`. The settlement stays `processing`; the
-     job polls every minute until the anchor moves on. (Surfacing `interactiveUrl` to the merchant
-     is not built — it is not in the API.)
+   - *Real anchor* (`ANCHOR_SEP24_TEST_KYC_URL` unset): a person completes `interactiveUrl`. The
+     settlement stays `processing` — never `failed`, no error logged — and `GET /settlements` /
+     `GET /payments` expose `interactiveUrl` for merchant-web's "Complete verification" button. The
+     adapter records the anchor's last status in `Settlement.anchorStatus` (written only when it
+     changes); the API shows `interactiveUrl` only while that is `incomplete` and the settlement is
+     `processing`. The minute job makes one `GET /transaction` per run while waiting and resumes
+     (step 6) on the first run after the anchor moves on. If the person never finishes, the anchor
+     decides: an `expired`/`error` status fails the settlement with `anchor_status`.
    - *testanchor:* its UI is a JS app that posts to its reference server, so the backend makes the
      same two calls itself: `POST {ANCHOR_SEP24_TEST_KYC_URL}/start` (Bearer = the `token` query
      param of `interactiveUrl`) → `{ sessionId }`, then `POST …/submit` (Bearer = sessionId)
@@ -118,5 +123,11 @@ provider a settlement was created with, so switching `ANCHOR_PROVIDER` never mov
   `SEP24_E2E=1 npm run test:e2e -- sep24` — `missing_iban` and `outside_anchor_limits` blocks, then
   a full 1 USDC settlement to `completed`, checked on Horizon, with `feeUSDC` 0.1 and `netTRY` 30.60
   in `paidOutTRY`. Skipped unless `SEP24_E2E=1`.
+- Live **manual** e2e, the real-anchor path (1 testnet USDC, needs a person with a browser):
+  `SEP24_MANUAL_KYC=1 SEP24_URL_FILE=/tmp/url npm run test:e2e -- sep24-manual-kyc`. With
+  `ANCHOR_SEP24_TEST_KYC_URL` unset it holds 2.5 min checking the settlement stays `processing` with
+  `interactiveUrl` on `/settlements` and `/payments` (≤ 1 anchor poll per minute, no errors), prints
+  the URL, waits up to 30 min for the form, then expects `completed` and `interactiveUrl: null`.
+  Keep the amount unchanged in the form (else `amount_mismatch`).
 - Non-live e2e: `test/auto-payout.e2e-spec.ts` — `settlementMode`, `409` on withdrawals, `paidOutTRY`
   bucket (no calls to the anchor).
