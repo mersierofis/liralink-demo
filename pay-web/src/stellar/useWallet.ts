@@ -2,11 +2,23 @@ import { useCallback, useState } from 'react'
 import { Horizon } from '@stellar/stellar-sdk'
 import { getWalletKit, WalletNetwork } from './walletKit'
 
+export type WalletErrorKind = 'mainnet' | 'generic'
+
 export type WalletState = {
   address: string | null
   walletId: string | null
   connecting: boolean
   error: string | null
+  errorKind: WalletErrorKind | null
+}
+
+export class WalletNetworkError extends Error {
+  kind: WalletErrorKind
+
+  constructor(kind: WalletErrorKind, message: string) {
+    super(message)
+    this.kind = kind
+  }
 }
 
 async function assertTestnetOrHorizon(address: string): Promise<void> {
@@ -14,24 +26,30 @@ async function assertTestnetOrHorizon(address: string): Promise<void> {
   try {
     const { network, networkPassphrase } = await kit.getNetwork()
     if (/public|mainnet/i.test(network) || networkPassphrase === WalletNetwork.PUBLIC) {
-      throw new Error('Wallet is on Mainnet. Switch Freighter to Testnet and try again.')
+      throw new WalletNetworkError(
+        'mainnet',
+        'Wallet is on Mainnet. Switch Freighter to Testnet and try again.',
+      )
     }
     if (networkPassphrase !== WalletNetwork.TESTNET) {
-      throw new Error('Wallet is not on Stellar Testnet. Switch Freighter to Testnet.')
+      throw new WalletNetworkError(
+        'mainnet',
+        'Wallet is not on Stellar Testnet. Switch Freighter to Testnet.',
+      )
     }
     return
   } catch (err) {
-    // Some wallets (e.g. Albedo) do not implement getNetwork — fall through to Horizon.
-    if (err instanceof Error && /Mainnet|Testnet/i.test(err.message)) throw err
+    if (err instanceof WalletNetworkError) throw err
+    // Some wallets do not implement getNetwork — fall through to Horizon.
   }
 
-  // Horizon probe: account must exist on testnet (Friendbot-funded).
   const server = new Horizon.Server(import.meta.env.VITE_HORIZON_URL)
   try {
     await server.loadAccount(address)
   } catch {
-    throw new Error(
-      'Could not load this account on Stellar Testnet. Fund it with Friendbot at lab.stellar.org, or switch the wallet to Testnet.',
+    throw new WalletNetworkError(
+      'mainnet',
+      'Could not load this account on Stellar Testnet. Switch the wallet to Testnet and fund it with Friendbot.',
     )
   }
 }
@@ -42,11 +60,12 @@ export function useWallet() {
     walletId: null,
     connecting: false,
     error: null,
+    errorKind: null,
   })
 
   const connect = useCallback(async () => {
     const kit = getWalletKit()
-    setState((s) => ({ ...s, connecting: true, error: null }))
+    setState((s) => ({ ...s, connecting: true, error: null, errorKind: null }))
     try {
       await kit.openModal({
         onWalletSelected: async (option) => {
@@ -59,10 +78,19 @@ export function useWallet() {
               walletId: option.id,
               connecting: false,
               error: null,
+              errorKind: null,
             })
           } catch (err) {
+            const kind = err instanceof WalletNetworkError ? err.kind : 'generic'
             const message = err instanceof Error ? err.message : 'Failed to connect wallet'
-            setState((s) => ({ ...s, connecting: false, error: message, address: null, walletId: null }))
+            // Never rethrow — avoids uncaught promise + stuck "Connecting…"
+            setState({
+              address: null,
+              walletId: null,
+              connecting: false,
+              error: message,
+              errorKind: kind,
+            })
           }
         },
         onClosed: () => {
@@ -71,12 +99,27 @@ export function useWallet() {
       })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to connect wallet'
-      setState((s) => ({ ...s, connecting: false, error: message }))
+      setState((s) => ({
+        ...s,
+        connecting: false,
+        error: message,
+        errorKind: 'generic',
+      }))
     }
   }, [])
 
   const disconnect = useCallback(() => {
-    setState({ address: null, walletId: null, connecting: false, error: null })
+    setState({
+      address: null,
+      walletId: null,
+      connecting: false,
+      error: null,
+      errorKind: null,
+    })
+  }, [])
+
+  const clearError = useCallback(() => {
+    setState((s) => ({ ...s, error: null, errorKind: null }))
   }, [])
 
   const signXdr = useCallback(
@@ -105,8 +148,10 @@ export function useWallet() {
     walletId: state.walletId,
     connecting: state.connecting,
     error: state.error,
+    errorKind: state.errorKind,
     connect,
     disconnect,
+    clearError,
     signXdr,
   }
 }

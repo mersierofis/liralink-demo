@@ -10,6 +10,7 @@ import { MerchantHeader } from '@/components/MerchantHeader'
 import { PaidReceipt } from '@/components/PaidReceipt'
 import { PayButton } from '@/components/PayButton'
 import { PayingState } from '@/components/PayingState'
+import { TestnetRequiredCard } from '@/components/TestnetRequiredCard'
 import { WalletButton } from '@/components/WalletButton'
 import { HttpError } from '@/api/client'
 import { payAmountUSDC, usePayQuote, usePayStatus, useSubmitted } from '@/api/hooks'
@@ -236,7 +237,16 @@ export function PayPage() {
                 onConnect={() => void wallet.connect()}
                 onDisconnect={wallet.disconnect}
               />
-              {wallet.error ? <ErrorState title="Wallet" message={wallet.error} /> : null}
+              {wallet.errorKind === 'mainnet' ? (
+                <TestnetRequiredCard
+                  onRetry={() => {
+                    wallet.clearError()
+                    void wallet.connect()
+                  }}
+                />
+              ) : wallet.error ? (
+                <ErrorState title="Wallet" message={wallet.error} onRetry={() => void wallet.connect()} />
+              ) : null}
               {payError ? (
                 <ErrorState title="Payment failed" message={payError} onRetry={() => void runPay()} />
               ) : null}
