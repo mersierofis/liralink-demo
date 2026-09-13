@@ -13,7 +13,7 @@ import { ExplorerLink } from '@/components/ExplorerLink'
 import { ErrorState } from '@/components/ErrorState'
 import { EmptyState } from '@/components/EmptyState'
 import { SettlementTimeline } from '@/components/SettlementTimeline'
-import { useLink } from '@/api/hooks'
+import { useLink, useSimulatePayment } from '@/api/hooks'
 import { HttpError } from '@/api/client'
 import { formatTRY, formatUSDC, formatUSDCFull } from '@/lib/money'
 import { formatDateTime, shortAddress } from '@/lib/format'
@@ -29,6 +29,9 @@ export default function LinkDetailPage() {
       return status && POLLING_STATUSES.includes(status) ? 3000 : false
     },
   })
+
+  const simulatePayment = useSimulatePayment()
+  const isMock = import.meta.env.VITE_USE_MOCK === 'true'
 
   const prevStatus = useRef<LinkStatus | undefined>(undefined)
 
@@ -89,7 +92,22 @@ export default function LinkDetailPage() {
           {link.description && <p className="mt-1 text-muted-foreground">{link.description}</p>}
           <p className="mt-1 font-mono text-xs text-muted-foreground">{link.code}</p>
         </div>
-        <CopyButton value={link.payUrl} label="Copy pay link" />
+        <div className="flex items-center gap-2">
+          {isMock && link.status === 'open' && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={simulatePayment.isPending}
+              onClick={() => {
+                simulatePayment.mutate(link.id)
+                toast.info('Simulating payment… it will land in ~2s')
+              }}
+            >
+              Simulate payment
+            </Button>
+          )}
+          <CopyButton value={link.payUrl} label="Copy pay link" />
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">

@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useCreateLink } from '@/api/hooks'
 import { HttpError } from '@/api/client'
+import { TRY_AMOUNT_REGEX, formatToTRYAmount, parseTRYAmount } from '@/lib/tryAmount'
 import type { PaymentLink } from '@/api/types'
 
 const EXPIRY_OPTIONS = [
@@ -35,9 +36,10 @@ const schema = z.object({
   amountTRY: z
     .string()
     .min(1, 'Amount is required')
+    .regex(TRY_AMOUNT_REGEX, 'Enter a plain amount, e.g. 5000 or 5000.50')
     .refine((v) => {
-      const n = Number(v)
-      return Number.isFinite(n) && n >= 1 && n <= 1_000_000
+      const n = parseTRYAmount(v)
+      return n.gte(1) && n.lte(1_000_000)
     }, 'Enter an amount between ₺1.00 and ₺1,000,000.00'),
   expiresInHours: z.string(),
 })
@@ -58,7 +60,7 @@ export function CreateLinkDialog({ onCreated }: { onCreated: (link: PaymentLink)
       const link = await createLink.mutateAsync({
         title: values.title,
         description: values.description || undefined,
-        amountTRY: Number(values.amountTRY).toFixed(2),
+        amountTRY: formatToTRYAmount(values.amountTRY),
         expiresInHours: Number(values.expiresInHours),
       })
       setOpen(false)

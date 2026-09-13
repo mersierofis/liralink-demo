@@ -6,6 +6,18 @@ export type LinkStatus = 'open' | 'underpaid' | 'paid' | 'expired' | 'cancelled'
 export type PayRail = 'contract' | 'memo';
 export type SettleStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type WdStatus = 'requested' | 'processing' | 'completed' | 'failed';
+// 'balance': TRY accrues in availableTRY and the merchant withdraws (mock anchor).
+// 'auto_payout': the anchor pays the IBAN during settlement; POST /withdrawals → 409 (sep24 anchor).
+export type SettlementMode = 'balance' | 'auto_payout';
+// Why a settlement is 'failed' — terminal, never retried:
+// unexpected_fee_asset: the anchor reported its fee in an asset other than our USDC;
+// invalid_fee: fee < 0 or > amountUSDC; anchor_status: the anchor ended the transaction as
+// error/expired/refunded/…; amount_mismatch: the anchor expected another amount (nothing sent).
+export type SettleFailReason =
+  | 'unexpected_fee_asset'
+  | 'invalid_fee'
+  | 'anchor_status'
+  | 'amount_mismatch';
 
 export interface Merchant {
   id: string;
@@ -16,6 +28,7 @@ export interface Merchant {
   // Excess USDC from overpaid links, parked here rather than auto-converted to
   // TRY — visible to the merchant, handled manually (refund or credit, Phase 3).
   unallocatedUSDC: string; // decimal string, 7 dp
+  settlementMode: SettlementMode; // 'auto_payout' → hide Withdraw, show "Paid to IBAN" + paidOutTRY
   createdAt: string;
 }
 
@@ -51,7 +64,12 @@ export interface PaymentLink {
   payments: Payment[]; // every successful transfer that credited this link — partial installments AND the completing payment; ordered oldest→newest
   // Soroban invoice, created best-effort by POST /links (retry: POST /links/:id/onchain); null if not on-chain.
   // While set, quotedUSDC is locked until expiresAt (quoteExpiresAt === expiresAt) and never re-quoted.
-  onchain: { contractId: string; invoiceCode: string; deadlineLedger: number; txHash?: string } | null;
+  onchain: {
+    contractId: string;
+    invoiceCode: string;
+    deadlineLedger: number;
+    txHash?: string;
+  } | null;
   createdAt: string;
 }
 
@@ -63,9 +81,12 @@ export interface Settlement {
   amountTRY: string;
   fxRate: string;
   savedUSDC: string;
+  feeUSDC: string | null; // 7 dp — anchor fee; null until completed (mock: "0.0000000")
+  netTRY: string | null; // 2 dp — TRY credited (balance) or paid to the IBAN (auto_payout); null until completed
   provider: 'mock' | 'sep24';
   status: SettleStatus;
   anchorRef?: string;
+  failReason: SettleFailReason | null; // set only when status is 'failed'
   createdAt: string;
   completedAt?: string;
 }
@@ -86,6 +107,7 @@ export interface Balance {
   pendingTRY: string;
   savedUSDC: string;
   unallocatedUSDC: string;
+  paidOutTRY: string; // 2 dp — Σ netTRY of completed auto_payout settlements (already on the IBAN)
 }
 
 /** What GET /pay/:code returns — the payer page's whole data model. */
@@ -130,9 +152,14 @@ export interface ApiError {
 }
 
 /** One row of GET /payments — every transfer, newest first. `settlement` is null for
- * installments that didn't complete their link (only the completing payment settles). */
+ * installments that didn't complete their link (only the completing payment settles).
+ * `link.status` / `receivedUSDC` are the link's CURRENT values (not as of this transfer): a
+ * partial payment shows `status: 'underpaid'` with `receivedUSDC` < `quotedUSDC`. */
 export interface PaymentListItem extends Payment {
-  link: Pick<PaymentLink, 'code' | 'title' | 'amountTRY'>;
+  link: Pick<
+    PaymentLink,
+    'code' | 'title' | 'amountTRY' | 'status' | 'quotedUSDC' | 'receivedUSDC'
+  >;
   settlement: Settlement | null;
 }
 
@@ -155,6 +182,7 @@ export interface HealthResponse {
   anchor: 'mock' | 'sep24';
   listener: 'running' | 'stopped';
   platformAccount: string;
+  settlementMode: SettlementMode;
 }
 
 export interface FxResponse {
