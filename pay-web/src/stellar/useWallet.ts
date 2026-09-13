@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { Horizon } from '@stellar/stellar-sdk'
 import { getWalletKit, WalletNetwork } from './walletKit'
 
 export type WalletState = {
@@ -6,6 +7,33 @@ export type WalletState = {
   walletId: string | null
   connecting: boolean
   error: string | null
+}
+
+async function assertTestnetOrHorizon(address: string): Promise<void> {
+  const kit = getWalletKit()
+  try {
+    const { network, networkPassphrase } = await kit.getNetwork()
+    if (/public|mainnet/i.test(network) || networkPassphrase === WalletNetwork.PUBLIC) {
+      throw new Error('Wallet is on Mainnet. Switch Freighter to Testnet and try again.')
+    }
+    if (networkPassphrase !== WalletNetwork.TESTNET) {
+      throw new Error('Wallet is not on Stellar Testnet. Switch Freighter to Testnet.')
+    }
+    return
+  } catch (err) {
+    // Some wallets (e.g. Albedo) do not implement getNetwork — fall through to Horizon.
+    if (err instanceof Error && /Mainnet|Testnet/i.test(err.message)) throw err
+  }
+
+  // Horizon probe: account must exist on testnet (Friendbot-funded).
+  const server = new Horizon.Server(import.meta.env.VITE_HORIZON_URL)
+  try {
+    await server.loadAccount(address)
+  } catch {
+    throw new Error(
+      'Could not load this account on Stellar Testnet. Fund it with Friendbot at lab.stellar.org, or switch the wallet to Testnet.',
+    )
+  }
 }
 
 export function useWallet() {
@@ -22,24 +50,23 @@ export function useWallet() {
     try {
       await kit.openModal({
         onWalletSelected: async (option) => {
-          kit.setWallet(option.id)
-          const { network, networkPassphrase } = await kit.getNetwork()
-          if (/public|mainnet/i.test(network) || networkPassphrase === WalletNetwork.PUBLIC) {
-            throw new Error('Wallet is on Mainnet. Switch Freighter to Testnet and try again.')
+          try {
+            kit.setWallet(option.id)
+            const { address } = await kit.getAddress()
+            await assertTestnetOrHorizon(address)
+            setState({
+              address,
+              walletId: option.id,
+              connecting: false,
+              error: null,
+            })
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to connect wallet'
+            setState((s) => ({ ...s, connecting: false, error: message, address: null, walletId: null }))
           }
-          if (networkPassphrase !== WalletNetwork.TESTNET) {
-            throw new Error('Wallet is not on Stellar Testnet. Switch Freighter to Testnet.')
-          }
-          const { address } = await kit.getAddress()
-          setState({
-            address,
-            walletId: option.id,
-            connecting: false,
-            error: null,
-          })
         },
         onClosed: () => {
-          setState((s) => ({ ...s, connecting: false }))
+          setState((s) => (s.address ? s : { ...s, connecting: false }))
         },
       })
     } catch (err) {
