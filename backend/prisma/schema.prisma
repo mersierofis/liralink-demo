@@ -23,6 +23,7 @@ enum LinkStatus {
 enum PayRail {
   contract
   memo
+  x402
 }
 
 enum SettleStatus {
@@ -160,6 +161,40 @@ model Withdrawal {
   anchorRef   String?
   createdAt   DateTime  @default(now())
   completedAt DateTime?
+}
+
+enum X402SettleStatus {
+  pending
+  settled
+  failed
+}
+
+// An x402 settle whose facilitator call timed out (outcome unknown). The minute job looks for the
+// transfer on Horizon, retries the settle while the signed auth entries are valid (`expiresAt`),
+// and fails the row once they expired with nothing on-chain. Settled rows keep the tx hash.
+model X402Settlement {
+  id             String           @id @default(uuid())
+  linkCode       String
+  // From the facilitator's verify — informational only, never used to match a transfer.
+  payer          String?
+  // sha256 of the payer-signed Soroban auth entries in the payload. The facilitator rebuilds the
+  // transaction (own source + fee bump), so the tx hash isn't known before settle — but it copies
+  // these entries verbatim, and their nonce lands on-chain once. Reconcile matches only on this.
+  authEntriesHash String?
+  amountUSDC     Decimal          @db.Decimal(20, 7)
+  paymentPayload Json
+  requirements   Json
+  status         X402SettleStatus @default(pending)
+  attempts       Int              @default(0)
+  txHash         String?
+  // not_settled_before_expiry
+  failReason     String?
+  lastError      String?
+  expiresAt      DateTime
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([status])
 }
 
 // Idempotency for the Horizon payment listener — one row per processed operation id.

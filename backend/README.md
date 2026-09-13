@@ -60,6 +60,43 @@ the core flow. See `docs/01-BACKEND.md` §1.6 and the "Toolchain gotchas" sectio
 listener's actual matching rules (asset+issuer check, `memo_bytes` comparison, path-payment
 handling, idempotency, backoff, reconciliation poll).
 
+## x402 agent payments (experimental — testnet only, Coinbase facilitator)
+
+`GET /api/pay/:code/agent` lets an AI agent pay a link over HTTP 402
+([x402](https://www.x402.org/), `exact` scheme, x402 v2):
+
+1. No payment header → `402` with the requirements: USDC (SAC contract) on `stellar:testnet`,
+   `amount` = amount still due in 7-dp base units, `payTo` = the platform account.
+2. The agent signs Soroban auth entries for the USDC transfer (no XLM needed) and retries with a
+   `PAYMENT-SIGNATURE` header.
+3. The backend hands it to the facilitator to verify and settle, reads the settled transfer back
+   from Horizon (the facilitator's word alone credits nothing), and credits it through the same
+   matcher as the other rails (`Payment.rail = 'x402'`, idempotent on the tx hash) → `200` with a
+   receipt + `PAYMENT-RESPONSE` header. Settlement then runs as for any paid link.
+
+```
+AGENT_SECRET=$(stellar keys secret payer) npm run agent:pay -- --code <LINKCODE> --api http://localhost:3000/api
+```
+
+Be honest about what this is:
+
+- **Testnet only.** It uses the **x402.org facilitator run by Coinbase** (`X402_FACILITATOR_URL`,
+  no API key), which serves `stellar:testnet` and has no pubnet entry. We don't run or control it:
+  if it is down, the route answers `503`. Pubnet would need another facilitator (OZ Channels needs an
+  API key) or self-facilitation — neither is built. `STELLAR_NETWORK=public` disables the route.
+- **No memo.** A Soroban transaction can't carry one, so the link is identified by the URL, not by
+  a memo; the Horizon listener never sees these transfers (it watches classic payments only).
+- **Exact amount.** The agent pays exactly what is due; a quote that changes between the 402 and the
+  retry is rejected (`payment_requirements_mismatch`) and the agent retries with fresh requirements.
+- **Settle timeouts.** If the facilitator times out settling, the agent gets `202` and an
+  `X402Settlement` row stays `pending`; every minute the backend looks for the transfer on Horizon,
+  retries the settle while the signed auth entries are valid (~60 s), and fails the row once they
+  expired with nothing on-chain.
+- **Tests:** unit tests with a faked facilitator + Horizon (`src/pay/x402.service.spec.ts`) plus
+  one real testnet run (see the PR); no e2e against the live facilitator.
+
+Skill used: `skills/agentic-payments/` (vendored from `stellar/stellar-dev-skill`, see `SOURCE.md`).
+
 ## Custody model (hackathon simplification — read before assuming production-readiness)
 
 **One platform account holds all merchant USDC.** Merchant balances are ledger rows in Postgres,
@@ -79,8 +116,8 @@ transacts in crypto.
   segregated on-chain balances per merchant.
 - **Real TRY anchor** — wire `Sep24AnchorAdapter` to a licensed Stellar anchor once one is
   selected (the mock adapter is a drop-in placeholder with the same interface).
-- **x402 agentic payments** — `GET /pay/:code/agent` responding `402` with Stellar payment
-  requirements, so an AI agent can pay the same link programmatically.
+- **x402 on pubnet** — the testnet route above depends on Coinbase's x402.org facilitator; mainnet
+  needs a facilitator that serves `stellar:pubnet` (or self-facilitation), plus automated tests.
 - **DeFindex auto-save** — deposit the `autoSavePercent` portion of each settlement into a
   DeFindex USDC vault instead of just ledgering it.
 

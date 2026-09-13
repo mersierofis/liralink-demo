@@ -41,6 +41,25 @@ docker compose up -d
 
 Each app has its own README with its own run instructions.
 
+## Agentic payments (x402)
+
+The same payment link can be paid by an AI agent over HTTP 402 ([x402](https://www.x402.org/)):
+`GET /api/pay/:code/agent` answers `402 Payment Required` with Stellar payment requirements (USDC,
+`stellar:testnet`); the agent signs the USDC transfer and retries; the backend credits the link and
+answers `200` with a receipt. Demo, from `backend/` with a payer that holds testnet USDC:
+
+```
+AGENT_SECRET=$(stellar keys secret payer) npm run agent:pay -- --code <CODE>
+```
+
+(`--api https://liralink-api.tutorialplatform.com/api` to pay against the live API instead of
+localhost.)
+
+> **Testnet only, third-party facilitator.** Verification and settlement go through the
+> **x402.org facilitator operated by Coinbase**, which serves Stellar testnet only. We don't run or
+> control it — if it is down the route answers `503`; a settle that times out is kept `pending`
+> and reconciled every minute. There is no mainnet path yet. Details: `backend/README.md`.
+
 ## Regulatory note
 
 LiraLink is structured as an **export-collection** flow, not a domestic crypto payment. The payer is always **abroad** and pays in USDC from their own wallet; the merchant only ever sells in and receives **Turkish lira** and never touches crypto. Conversion USDC→TRY runs through a **licensed Stellar anchor** — the regulated party in the flow. Turkish rules restricting crypto as a *domestic* payment instrument are designed around domestic settlement, which this flow does not touch.

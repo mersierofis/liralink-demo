@@ -3,7 +3,7 @@
 // went live with phase 2 part D).
 
 export type LinkStatus = 'open' | 'underpaid' | 'paid' | 'expired' | 'cancelled';
-export type PayRail = 'contract' | 'memo';
+export type PayRail = 'contract' | 'memo' | 'x402';
 export type SettleStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type WdStatus = 'requested' | 'processing' | 'completed' | 'failed';
 // 'balance': TRY accrues in availableTRY and the merchant withdraws (mock anchor).
@@ -35,7 +35,7 @@ export interface Merchant {
 export interface Payment {
   id: string;
   linkId: string;
-  rail: PayRail; // 'memo' = classic payment with text memo; 'contract' = paid through the Soroban invoice contract
+  rail: PayRail; // 'memo' = classic payment with text memo; 'contract' = paid through the Soroban invoice contract; 'x402' = agent paid GET /pay/:code/agent (testnet)
   txHash: string;
   payerAddress: string;
   amountUSDC: string; // decimal string, 7 dp — the amount of *this* transaction, not the link total
