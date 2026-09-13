@@ -183,6 +183,8 @@ npm run start:dev             # http://localhost:3000 , Swagger at /docs
       open it in a new tab (`target="_blank" rel="noopener noreferrer"`) and label the row
       "Verification needed" instead of "Processing". Keep polling (~10 s) while any row has it — the
       button disappears by itself. A missing field (older backend) means `null`: no button.
+      The link carries a short-lived anchor token (testanchor: 15 min from when the settlement
+      starts) — surface the button prominently (e.g. a dashboard banner), not only deep in a table.
 - [ ] Settings: "Change password" form → `PATCH /me { currentPassword, newPassword }` (≥ 8 chars).
       `400` if one field is missing, `403` wrong current password.
 - [ ] Demo account `demo@liralink.app` — the password is not in the repo any more: ask Hasan.

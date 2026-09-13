@@ -112,6 +112,9 @@ provider a settlement was created with, so switching `ANCHOR_PROVIDER` never mov
   query with `COALESCE("netTRY", "amountTRY")` once settlement volume grows.
 - **`BALANCE_MODE_PROVIDERS`** (`anchor.adapter.ts`) is a hand-maintained list, today `['mock']`. A new
   balance-mode provider must be added there, or its completed settlements land in `paidOutTRY`.
+- **`interactiveUrl` expires.** Its token is short-lived (testanchor: 15 min after the withdraw
+  opens). A merchant who clicks later gets a dead page while the settlement keeps waiting until the
+  anchor expires the transaction. Re-opening a fresh withdraw for a stale one is not built.
 - Single-process guard only — running two backend instances against one DB would need a DB lock
   around the payment step.
 
