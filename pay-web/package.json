@@ -53,5 +53,11 @@
     "workerDirectory": [
       "public"
     ]
+  },
+  "overrides": {
+    "use-sync-external-store": "1.5.0"
+  },
+  "optionalDependencies": {
+    "utf-8-validate": "5.0.10"
   }
 }
