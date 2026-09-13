@@ -210,6 +210,8 @@ const HUMAN_MS = 30 * 60_000;
       );
       expect(done).toMatchObject({ status: 'completed', failReason: null });
       expect(done.anchorTxHash).toMatch(/^[0-9a-f]{64}$/);
+      // testanchor keeps 10%: 0.1 of 1 USDC → 30.60 of 34.00 TRY.
+      expect(done.feeUSDC?.toFixed(7)).toBe('0.1000000');
       expect(done.netTRY?.toFixed(2)).toBe('30.60');
       expect(
         errors.mock.calls.filter(([m]) => String(m).includes(s.id)),
