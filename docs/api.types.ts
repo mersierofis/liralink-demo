@@ -167,7 +167,22 @@ export interface PaymentListItem extends Payment {
   settlement: Settlement | null;
 }
 
-// ---- Paginated list envelopes, as returned by GET /links and GET /payments ----
+/** One row of GET /unallocated — every credit to Merchant.unallocatedUSDC, newest first. The rows
+ * of all pages sum to unallocatedUSDC. 'stray': a payment to a link that was no longer payable
+ * (paid/expired/cancelled), credited in full; 'overpaid': the excess over quotedUSDC on the
+ * payment that completed a link. */
+export interface UnallocatedCredit {
+  id: string;
+  source: 'stray' | 'overpaid';
+  txHash: string;
+  explorerUrl: string;
+  amountUSDC: string; // decimal string, 7 dp — what this row added to unallocatedUSDC
+  linkCode: string;
+  reason: string; // e.g. 'link status is "paid"' · 'received 3.0000000 of 2.0000000 USDC quoted'
+  createdAt: string;
+}
+
+// ---- Paginated list envelopes, as returned by GET /links, /payments, /unallocated ----
 export interface Paginated<T> {
   items: T[];
   total: number;

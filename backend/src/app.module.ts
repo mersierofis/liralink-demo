@@ -13,6 +13,7 @@ import { PayModule } from './pay/pay.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SettlementsModule } from './settlements/settlements.module';
 import { StellarModule } from './stellar/stellar.module';
+import { UnallocatedModule } from './unallocated/unallocated.module';
 import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 
 @Module({
@@ -32,6 +33,7 @@ import { WithdrawalsModule } from './withdrawals/withdrawals.module';
     PayModule,
     SettlementsModule,
     WithdrawalsModule,
+    UnallocatedModule,
   ],
 })
 export class AppModule {}
