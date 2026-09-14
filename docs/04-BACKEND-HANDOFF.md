@@ -87,8 +87,8 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
 ## 3. Gotchas that will bite you (read these)
 
 1. **`GET /pay/:code` nests the destination + memo under `rails.memo` — NOT at the top level.**
-   The `buildPaymentXdr` example in `02-PAY-WEB.md` (lines ~42–52) reads `q.destination` and
-   `q.memo`. The real response has no such top-level fields. Use:
+   There are no top-level `q.destination` / `q.memo` fields (older copies of the `buildPaymentXdr`
+   example in `02-PAY-WEB.md` read them; it's fixed now). Use:
    ```ts
    const { destination, memo } = q.rails.memo!;   // memo === the 8-char link code
    Operation.payment({ destination, asset: usdc, amount: q.amountUSDC })

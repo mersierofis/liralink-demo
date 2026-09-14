@@ -116,7 +116,7 @@ interface PaymentLink {
 
 interface Payment {
   id: string; linkId: string;
-  rail: PayRail;                 // 'memo' = classic text-memo payment; 'contract' = paid through the invoice contract
+  rail: PayRail;                 // 'memo' = classic text-memo payment; 'contract' = paid through the invoice contract; 'x402' = agent paid GET /pay/:code/agent (testnet)
   txHash: string; payerAddress: string;
   amountUSDC: string; ledger: number;
   explorerUrl: string;
