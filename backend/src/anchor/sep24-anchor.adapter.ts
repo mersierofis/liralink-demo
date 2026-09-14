@@ -14,6 +14,7 @@ import {
 } from '@stellar/stellar-sdk';
 import { Decimal } from '../common/decimal';
 import { Merchant } from '../generated/prisma/client';
+import { expired, findTransaction, submitSigned } from '../stellar/signed-tx';
 import {
   AnchorAdapter,
   AnchorSettlementPatch,
@@ -257,10 +258,10 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
     persist: Persist,
   ): Promise<SettleResult | null> {
     if (state.anchorTxXdr && state.anchorTxHash) {
-      const onLedger = await this.findTransaction(state.anchorTxHash);
+      const onLedger = await findTransaction(this.horizon, state.anchorTxHash);
       if (onLedger?.successful) return null; // sent; waiting for the anchor to see it
       const saved = new Transaction(state.anchorTxXdr, this.networkPassphrase);
-      if (!onLedger && !(await this.expired(saved))) {
+      if (!onLedger && !(await expired(this.horizon, saved))) {
         await this.submit(state, saved);
         return null;
       }
@@ -309,41 +310,10 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
     state: SettlementAnchorState,
     tx: Transaction,
   ): Promise<void> {
-    const hash = tx.hash().toString('hex');
-    try {
-      await this.horizon.submitTransaction(tx);
-      this.logger.log(
-        `Settlement ${state.id}: sent ${state.amountUSDC.toFixed(7)} USDC to anchor, tx ${hash}`,
-      );
-    } catch (err) {
-      if ((await this.findTransaction(hash))?.successful) return;
-      throw new Error(
-        `payment ${hash} submission failed: ${JSON.stringify(horizonResultCodes(err))}`,
-      );
-    }
-  }
-
-  /** True once a ledger has closed after the transaction's maxTime — it can never be included. */
-  private async expired(tx: Transaction): Promise<boolean> {
-    const maxTime = Number(tx.timeBounds?.maxTime ?? 0);
-    if (!maxTime) return false;
-    const { records } = await this.horizon
-      .ledgers()
-      .order('desc')
-      .limit(1)
-      .call();
-    return Date.parse(records[0].closed_at) / 1000 > maxTime;
-  }
-
-  private async findTransaction(
-    hash: string,
-  ): Promise<{ successful: boolean } | null> {
-    try {
-      return await this.horizon.transactions().transaction(hash).call();
-    } catch (err) {
-      if (httpStatus(err) === 404) return null;
-      throw err;
-    }
+    await submitSigned(this.horizon, tx);
+    this.logger.log(
+      `Settlement ${state.id}: sent ${state.amountUSDC.toFixed(7)} USDC to anchor, tx ${tx.hash().toString('hex')}`,
+    );
   }
 
   private async getTransaction(id: string): Promise<Sep24Transaction> {
@@ -437,16 +407,4 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
     }
     return JSON.parse(text) as T;
   }
-}
-
-function httpStatus(err: unknown): number | undefined {
-  const response = (err as { response?: { status?: number } })?.response;
-  return response?.status;
-}
-
-function horizonResultCodes(err: unknown): unknown {
-  const data = (
-    err as { response?: { data?: { extras?: { result_codes?: unknown } } } }
-  )?.response?.data;
-  return data?.extras?.result_codes ?? String(err);
 }

@@ -80,6 +80,7 @@ type LinkStatus   = 'open' | 'underpaid' | 'paid' | 'expired' | 'cancelled';
 type PayRail      = 'contract' | 'memo' | 'x402'; // 'contract' = Soroban invoice rail · 'x402' = agent paid GET /pay/:code/agent (testnet, x402.org facilitator)
 type SettleStatus = 'pending' | 'processing' | 'completed' | 'failed';
 type WdStatus     = 'requested' | 'processing' | 'completed' | 'failed';
+type UsdcWdStatus = 'submitted' | 'completed' | 'failed'; // POST /usdc-withdrawals — 'submitted' until the payment is on the ledger
 type SettlementMode = 'balance' | 'auto_payout'; // balance: TRY accrues, merchant withdraws (mock anchor) · auto_payout: the anchor pays the IBAN at settlement (sep24)
 type SettleFailReason = 'unexpected_fee_asset' | 'invalid_fee' | 'anchor_status' | 'amount_mismatch'; // why a settlement is 'failed' — terminal, never retried
 
@@ -87,7 +88,7 @@ interface Merchant {
   id: string; email: string; businessName: string;
   iban?: string;                 // for withdrawals
   autoSavePercent: number;       // 0–50, default 0 (DeFindex stretch)
-  unallocatedUSDC: string;       // decimal string, 7 dp — excess from overpaid links, awaiting manual handling
+  unallocatedUSDC: string;       // decimal string, 7 dp — overpaid excess + stray payments, minus non-failed USDC withdrawals from it
   settlementMode: SettlementMode; // from the backend's ANCHOR_PROVIDER — Withdraw button vs "Paid to IBAN"
   createdAt: string;
 }
@@ -139,6 +140,17 @@ interface Settlement {
 interface Withdrawal {
   id: string; merchantId: string; amountTRY: string; iban: string;
   status: WdStatus; anchorRef?: string; createdAt: string; completedAt?: string;
+}
+
+interface UsdcWithdrawal {             // USDC sent from the platform account to the merchant's own Stellar wallet
+  id: string; merchantId: string;
+  amountUSDC: string;            // 7 dp
+  destination: string;           // G… — existed and trusted USDC when requested
+  source: 'saved' | 'unallocated'; // the balance that paid for it — debited when the request is accepted
+  status: UsdcWdStatus;
+  txHash: string; explorerUrl: string; // signed before it is submitted, so present from the first response
+  failReason: 'failed_on_ledger' | 'expired_unsubmitted' | null; // set only when 'failed'; the amount went back to `source`
+  createdAt: string; completedAt?: string;
 }
 
 interface Balance {
@@ -193,9 +205,11 @@ All bodies JSON. Timestamps ISO-8601 UTC. Money as decimal strings. Auth = `Auth
 | GET | `/settlements?page=&limit=` | `{ items: Settlement[], total }` (newest first) — one per paid link, created on detection, `pending → processing → completed` via the anchor |
 | POST | `/withdrawals` | `{ amountTRY, iban? }` → `201 Withdrawal` (`status: 'requested'`, amount reserved immediately). `422` if > `availableTRY`; `400` if `amountTRY` ≤ 0 or no `iban` in body or profile; `409` `"Payouts are automatic in this mode"` when `settlementMode` is `auto_payout` |
 | GET | `/withdrawals?page=&limit=` | `{ items: Withdrawal[], total }` (newest first) |
-| GET | `/unallocated?page=&limit=` | `{ items: UnallocatedCredit[], total }` (newest first) — every credit to `unallocatedUSDC`: `source: 'stray'` (a payment to a link no longer payable, credited in full) or `'overpaid'` (the excess over `quotedUSDC` on the completing payment); all rows sum to `unallocatedUSDC`. Each row: `{ id, source, txHash, explorerUrl, amountUSDC, linkCode, reason, createdAt }` |
+| POST | `/usdc-withdrawals` | `{ amountUSDC, destination, source: 'saved' \| 'unallocated' }` → `201 UsdcWithdrawal` — sends USDC from the platform account to the merchant's own `destination` and debits `savedUSDC` / `unallocatedUSDC` in the same DB transaction. The payment is signed and stored before it is submitted, so every retry resubmits that same transaction (it can never be sent twice). Normally returns `status: 'completed'` (~5 s); `'submitted'` if Horizon didn't confirm in time — the backend retries every minute until it lands (`completed`) or can no longer land (`failed`, amount returned to `source`). `400` if `amountUSDC` isn't 7 dp or ≤ 0, `destination` isn't a valid G… address, or `source` is unknown; `422` (plain `message`) if `amountUSDC` > the `source` balance, or `destination` doesn't exist, has no USDC trustline, has too little trustline limit left, or is the platform account |
+| GET | `/usdc-withdrawals?page=&limit=` | `{ items: UsdcWithdrawal[], total }` (newest first) |
+| GET | `/unallocated?page=&limit=` | `{ items: UnallocatedCredit[], total }` (newest first) — every credit to `unallocatedUSDC`: `source: 'stray'` (a payment to a link no longer payable, credited in full) or `'overpaid'` (the excess over `quotedUSDC` on the completing payment); all rows sum to the credits — `unallocatedUSDC` = that sum − non-failed `/usdc-withdrawals` with `source: 'unallocated'`. Each row: `{ id, source, txHash, explorerUrl, amountUSDC, linkCode, reason, createdAt }` |
 
-Balance: `availableTRY = Σ netTRY of completed balance-mode (mock) settlements − Σ non-failed withdrawals`, `paidOutTRY = Σ netTRY of completed auto_payout (sep24) settlements` (never withdrawable — the anchor already paid the IBAN), `pendingTRY = Σ amountTRY of pending/processing settlements` (gross; the fee is known only on completion), `savedUSDC = Σ savedUSDC of non-failed settlements`. Which bucket a settlement lands in follows the provider it was created with. A settlement's gross `amountTRY` is the link's locked `amountTRY` × (100 − `autoSavePercent`)% (keeping `quotedUSDC` × `autoSavePercent`% as `savedUSDC`); on completion `netTRY = amountTRY × (amountUSDC − feeUSDC) / amountUSDC`, rounded down to kuruş, and balances use `netTRY`.
+Balance: `availableTRY = Σ netTRY of completed balance-mode (mock) settlements − Σ non-failed withdrawals`, `paidOutTRY = Σ netTRY of completed auto_payout (sep24) settlements` (never withdrawable — the anchor already paid the IBAN), `pendingTRY = Σ amountTRY of pending/processing settlements` (gross; the fee is known only on completion), `savedUSDC = Σ savedUSDC of non-failed settlements − Σ non-failed USDC withdrawals from 'saved'`, `unallocatedUSDC` = stored counter: credited by overpaid/stray payments, debited by USDC withdrawals from `'unallocated'` (a failed one gives it back). Which bucket a settlement lands in follows the provider it was created with. A settlement's gross `amountTRY` is the link's locked `amountTRY` × (100 − `autoSavePercent`)% (keeping `quotedUSDC` × `autoSavePercent`% as `savedUSDC`); on completion `netTRY = amountTRY × (amountUSDC − feeUSDC) / amountUSDC`, rounded down to kuruş, and balances use `netTRY`.
 
 ### Payer (public, no auth)
 | Method | Path | Response |
@@ -212,7 +226,7 @@ Balance: `availableTRY = Σ netTRY of completed balance-mode (mock) settlements 
 | GET | `/fx` | `{ pair: 'USDC/TRY', rate: '34.00', source: 'mock'|'live', fetchedAt }` |
 
 ### Status codes
-`200/201/202` success · `400` validation · `401` no/invalid token · `403` wrong `currentPassword` on `PATCH /me` · `404` unknown link/code · `409` invalid state transition (e.g. cancel a paid link) or not allowed in this settlement mode (`POST /withdrawals` when `auto_payout`) · `422` business rule (insufficient balance).
+`200/201/202` success · `400` validation · `401` no/invalid token · `403` wrong `currentPassword` on `PATCH /me` · `404` unknown link/code · `409` invalid state transition (e.g. cancel a paid link) or not allowed in this settlement mode (`POST /withdrawals` when `auto_payout`) · `422` business rule (insufficient balance; USDC withdrawal destination can't receive USDC).
 
 ## 7. Soroban invoice contract (phase 2, Hasan — required; frontends get an optional second pay button)
 

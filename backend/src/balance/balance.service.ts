@@ -14,7 +14,8 @@ export class BalanceService {
    * withdrawal reserves its amount from the moment it's requested); paidOutTRY = Σ netTRY of
    * completed auto_payout settlements (the anchor already paid the IBAN — never withdrawable);
    * pendingTRY = Σ gross amountTRY of pending/processing settlements (the fee is known only on
-   * completion); savedUSDC = Σ auto-saved USDC of non-failed settlements. The bucket follows the
+   * completion); savedUSDC = Σ auto-saved USDC of non-failed settlements − Σ non-failed USDC
+   * withdrawals from `saved` (reserved from the moment they're signed). The bucket follows the
    * provider a settlement was created with. unallocatedUSDC (overpaid links, stray payments) is
    * never folded into TRY.
    *
@@ -45,13 +46,20 @@ export class BalanceService {
       where: { merchantId, status: { not: 'failed' } },
       _sum: { amountTRY: true },
     });
+    // unallocatedUSDC is a stored counter (debited directly); savedUSDC is derived, so subtract here.
+    const savedSent = await db.usdcWithdrawal.aggregate({
+      where: { merchantId, source: 'saved', status: { not: 'failed' } },
+      _sum: { amountUSDC: true },
+    });
 
     const zero = new Decimal(0);
     return {
       availableTRY: credited.minus(withdrawn._sum.amountTRY ?? zero).toFixed(2),
       pendingTRY: (pending._sum.amountTRY ?? zero).toFixed(2),
       paidOutTRY: paidOut.toFixed(2),
-      savedUSDC: (saved._sum.savedUSDC ?? zero).toFixed(7),
+      savedUSDC: (saved._sum.savedUSDC ?? zero)
+        .minus(savedSent._sum.amountUSDC ?? zero)
+        .toFixed(7),
       unallocatedUSDC: merchant.unallocatedUSDC.toFixed(7),
     };
   }
