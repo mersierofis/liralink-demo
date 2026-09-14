@@ -14,6 +14,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { SettlementsModule } from './settlements/settlements.module';
 import { StellarModule } from './stellar/stellar.module';
 import { UnallocatedModule } from './unallocated/unallocated.module';
+import { UsdcWithdrawalsModule } from './usdc-withdrawals/usdc-withdrawals.module';
 import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 
 @Module({
@@ -34,6 +35,7 @@ import { WithdrawalsModule } from './withdrawals/withdrawals.module';
     SettlementsModule,
     WithdrawalsModule,
     UnallocatedModule,
+    UsdcWithdrawalsModule,
   ],
 })
 export class AppModule {}

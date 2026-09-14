@@ -52,9 +52,10 @@ model Merchant {
   unallocatedUSDC Decimal  @default(0) @db.Decimal(20, 7)
   createdAt       DateTime @default(now())
 
-  links       PaymentLink[]
-  settlements Settlement[]
-  withdrawals Withdrawal[]
+  links           PaymentLink[]
+  settlements     Settlement[]
+  withdrawals     Withdrawal[]
+  usdcWithdrawals UsdcWithdrawal[]
 }
 
 model PaymentLink {
@@ -194,6 +195,40 @@ model X402Settlement {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
+  @@index([status])
+}
+
+enum UsdcWdSource {
+  saved
+  unallocated
+}
+
+enum UsdcWdStatus {
+  submitted
+  completed
+  failed
+}
+
+// USDC sent from the platform account to the merchant's own Stellar address (POST /usdc-withdrawals).
+// The amount is debited when the row is created: `unallocated` decrements merchant.unallocatedUSDC in
+// the same transaction; `saved` counts against savedUSDC while not failed. A failed row releases it.
+// The signed XDR + hash are persisted BEFORE submitting, so a retry resubmits the same transaction.
+model UsdcWithdrawal {
+  id          String       @id @default(uuid())
+  merchantId  String
+  merchant    Merchant     @relation(fields: [merchantId], references: [id])
+  amountUSDC  Decimal      @db.Decimal(20, 7)
+  destination String
+  source      UsdcWdSource
+  status      UsdcWdStatus @default(submitted)
+  txHash      String       @unique
+  txXdr       String
+  // failed_on_ledger | expired_unsubmitted — terminal, the debit is released
+  failReason  String?
+  createdAt   DateTime     @default(now())
+  completedAt DateTime?
+
+  @@index([merchantId, createdAt])
   @@index([status])
 }
 

@@ -44,6 +44,8 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
 | POST | `/withdrawals` | Bearer | `201 Withdrawal` (`{ amountTRY, iban? }`) |
 | GET | `/withdrawals?page=&limit=` | Bearer | `{ items: Withdrawal[], total }` |
 | GET | `/unallocated?page=&limit=` | Bearer | `{ items: UnallocatedCredit[], total }` |
+| POST | `/usdc-withdrawals` | Bearer | `201 UsdcWithdrawal` (`{ amountUSDC, destination, source: 'saved' \| 'unallocated' }`) |
+| GET | `/usdc-withdrawals?page=&limit=` | Bearer | `{ items: UsdcWithdrawal[], total }` |
 
 - When a link is paid, a `Settlement` appears as `pending`/`processing` (counted in `pendingTRY`) and
   moves to `completed` a few seconds later — only then does `availableTRY` grow. Poll `/balance`
@@ -80,7 +82,17 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
   of all pages sum to it. `source: 'stray'` = a payment to a link that was already paid, expired or
   cancelled (the whole amount); `'overpaid'` = the excess over `quotedUSDC` on the payment that
   completed a link. `reason` is human-readable text for a detail column, not an enum. The demo
-  merchant has two rows: a 2.0 stray (VHHCJ8QZ) and a 1.0 overpayment (WPQRQDT4).
+  merchant has two rows: a 2.0 stray (VHHCJ8QZ) and a 1.0 overpayment (WPQRQDT4). The rows list
+  credits; once the merchant sends some of it out (`POST /usdc-withdrawals`), `unallocatedUSDC` is
+  that sum minus the non-failed withdrawals from `'unallocated'`.
+- **`POST /usdc-withdrawals`** sends USDC (never TRY) from the platform account to the merchant's own
+  Stellar wallet, paid from `savedUSDC` or `unallocatedUSDC`. The amount leaves that balance
+  **immediately**. The response usually comes back after ~5 s with `status: 'completed'` and a
+  `txHash` / `explorerUrl`; if it says `'submitted'`, poll `GET /usdc-withdrawals` (~10 s) — the
+  backend keeps resubmitting the same signed transaction until it lands or can't any more
+  (`'failed'` + `failReason`, and the amount is back in the balance). `422` messages are plain
+  sentences meant for the user ("… has no USDC trustline — add USDC (issuer …) in the wallet first",
+  "amountUSDC 2.0000000 exceeds savedUSDC 1.0000000") — show `message` as-is. Testnet only.
 
 ---
 
@@ -134,7 +146,7 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
    password change (inline error — do **not** log out) · `404` unknown link/code ·
    `409` invalid state transition (e.g. cancel a `paid` link, or `POST /withdrawals` in `auto_payout`
    mode) · `422` business rule
-   (withdraw > `availableTRY`). Map these in your `client.ts` `ApiError` handler;
+   (withdraw > `availableTRY`; USDC withdrawal > its balance or to a wallet that can't take USDC). Map these in your `client.ts` `ApiError` handler;
    Vuslat: redirect to `/login` on `401`.
 
 8. **`code` in the URL is case-insensitive** — backend upper-cases it. Codes are 8-char uppercase.
@@ -195,6 +207,17 @@ npm run start:dev             # http://localhost:3000 , Swagger at /docs
       a list from `GET /unallocated`. Columns: date, source ("Stray payment" / "Overpayment"), link
       code, amount (USDC), reason, and the tx hash linked to `explorerUrl`. Needs an empty state
       (0 rows ⇔ `"0.0000000"`) and pagination (`page`, `limit` ≤ 100).
+- [ ] **"Send to my wallet"** on the **Held in USD** (`Balance.savedUSDC`) and **Unallocated**
+      (`Balance.unallocatedUSDC`) cards, shown when that figure is `> 0`. Dialog: amount (USDC,
+      send exactly 7 dp, a "Max" button filling in the card's figure), destination address (G…,
+      56 chars), confirm → `POST /usdc-withdrawals { amountUSDC, destination, source }` with
+      `source: 'saved'` from Held in USD and `'unallocated'` from Unallocated. Disable the button
+      while the request runs (it takes ~5 s) — don't let a double click send twice. On `201` show
+      the status and the `explorerUrl` link and refetch `/balance`; on `422`/`400` show `message`
+      inline and keep the dialog open. A small "USDC withdrawals" list from
+      `GET /usdc-withdrawals` (date, amount, from, destination shortened, status, tx link) with an
+      empty state; poll ~10 s while any row is `'submitted'`. Older backend (404 on the route) →
+      hide the button.
 - [ ] Settings: "Change password" form → `PATCH /me { currentPassword, newPassword }` (≥ 8 chars).
       `400` if one field is missing, `403` wrong current password.
 - [ ] Demo account `demo@liralink.app` — the password is not in the repo any more: ask Hasan.
