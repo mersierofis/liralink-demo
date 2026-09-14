@@ -79,5 +79,5 @@ CORS is open to `http://localhost:5173` (merchant-web) and `http://localhost:517
 ## Known gotcha (don't miss)
 
 `GET /pay/:code` returns the destination + memo under **`rails.memo.{destination,memo}`**, not at the top
-level. The `buildPaymentXdr` example in `02-PAY-WEB.md` reads `q.destination`/`q.memo` — that's stale.
+level — read `q.rails.memo.destination` / `q.rails.memo.memo` (as the `buildPaymentXdr` example in `02-PAY-WEB.md` does), never `q.destination`/`q.memo`.
 The memo must equal the link `code`; without it the backend cannot match the payment. See `04-BACKEND-HANDOFF.md` §3.

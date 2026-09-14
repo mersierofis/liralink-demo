@@ -27,7 +27,7 @@ Terminal/error states: `expired`, `cancelled`, `already paid` (show receipt), `n
 ## Data flow
 
 ```
-GET /api/pay/:code  → PayQuote { amountUSDC, destination, memo, asset, quoteExpiresAt, status, ... }
+GET /api/pay/:code  → PayQuote { amountUSDC, rails: { memo: { destination, memo }, contract? }, asset, quoteExpiresAt, status, ... }
 [Connect wallet]    → StellarWalletsKit.openModal → getAddress()
 [Pay]               → build tx (see below) → kit.signTransaction(xdr) → horizon.submitTransaction
                     → POST /api/pay/:code/submitted { txHash }   (fire-and-forget hint)
@@ -44,8 +44,8 @@ export async function buildPaymentXdr(q: PayQuote, source: string) {
   const account = await server.loadAccount(source);            // throws if unfunded → show "account not funded"
   const usdc = new Asset(q.asset.code, q.asset.issuer);
   const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: Networks.TESTNET })
-    .addOperation(Operation.payment({ destination: q.destination, asset: usdc, amount: q.amountUSDC }))
-    .addMemo(Memo.text(q.memo))                                  // memo = link code — REQUIRED, backend matches on it
+    .addOperation(Operation.payment({ destination: q.rails.memo!.destination, asset: usdc, amount: q.amountUSDC })) // rails.memo is always present
+    .addMemo(Memo.text(q.rails.memo!.memo))                      // memo = link code — REQUIRED, backend matches on it
     .setTimeout(180)
     .build();
   return tx.toXDR();
