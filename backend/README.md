@@ -11,6 +11,7 @@ cp .env.example .env            # then fill in PLATFORM_ACCOUNT_SECRET — see b
 npx prisma migrate dev
 npm run seed                    # idempotent: demo@liralink.app, password = SEED_DEMO_PASSWORD in .env (ask Hasan; never fabricates payments)
 npm run demo:reset -- --dry-run # before a demo: drop mock withdrawals, finish mock settlements (drop --dry-run to apply)
+npm run demo:check              # before a rehearsal, read-only: /health, platform + payer USDC, open links, anchor, last 3 payments; exit 1 = NOT READY
 npm run start:dev               # /docs (Swagger) at http://localhost:3000/docs
 ```
 
