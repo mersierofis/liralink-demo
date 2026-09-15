@@ -37,11 +37,14 @@ const FOLLOW_FOR_MS = 120_000;
 const POLL_EVERY_MS = 3_000;
 const PAYMENT_TIMEOUT_S = 300;
 const HTTP_TIMEOUT_MS = 20_000;
+// stellar.toml is re-read this often, so a rotated SIGNING_KEY or moved endpoint needs no restart.
+const TOML_TTL_MS = 60 * 60_000;
 
 interface Endpoints {
   transferServer: string;
   authEndpoint: string;
   signingKey: string;
+  fetchedAt: number;
 }
 
 type Persist = (patch: AnchorSettlementPatch) => Promise<void>;
@@ -327,13 +330,17 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
   }
 
   private async getEndpoints(): Promise<Endpoints> {
-    if (this.endpoints) return this.endpoints;
+    if (this.endpoints && Date.now() - this.endpoints.fetchedAt < TOML_TTL_MS) {
+      return this.endpoints;
+    }
     if (!this.homeDomain) {
       throw new Error(
         'ANCHOR_HOME_DOMAIN is required for ANCHOR_PROVIDER=sep24',
       );
     }
-    const toml = await StellarToml.Resolver.resolve(this.homeDomain);
+    const toml = await StellarToml.Resolver.resolve(this.homeDomain, {
+      timeout: HTTP_TIMEOUT_MS,
+    });
     const transferServer = toml.TRANSFER_SERVER_SEP0024;
     const authEndpoint = toml.WEB_AUTH_ENDPOINT;
     const signingKey = toml.SIGNING_KEY;
@@ -350,10 +357,15 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
         `${this.homeDomain} is on "${toml.NETWORK_PASSPHRASE}", not "${this.networkPassphrase}"`,
       );
     }
+    // A JWT issued under a rotated SIGNING_KEY is re-negotiated against the new one.
+    if (this.endpoints && this.endpoints.signingKey !== signingKey) {
+      this.jwt = null;
+    }
     this.endpoints = {
       transferServer: transferServer.replace(/\/$/, ''),
       authEndpoint,
       signingKey,
+      fetchedAt: Date.now(),
     };
     return this.endpoints;
   }
@@ -365,9 +377,21 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
       return this.jwt.token;
     }
     const { authEndpoint, signingKey } = await this.getEndpoints();
-    const challenge = await this.request<{ transaction: string }>(
+    const challenge = await this.request<{
+      transaction: string;
+      network_passphrase?: string;
+    }>(
       `${authEndpoint}?${new URLSearchParams({ account: this.keypair.publicKey(), home_domain: this.homeDomain })}`,
     );
+    // SEP-10: the challenge may name its network — never sign one meant for another network.
+    if (
+      challenge.network_passphrase &&
+      challenge.network_passphrase !== this.networkPassphrase
+    ) {
+      throw new Error(
+        `${this.homeDomain} SEP-10 challenge is for "${challenge.network_passphrase}", not "${this.networkPassphrase}"`,
+      );
+    }
     const { tx } = WebAuth.readChallengeTx(
       challenge.transaction,
       signingKey,
@@ -401,6 +425,14 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
     const text = await res.text();
     const path = new URL(url).pathname;
     if (!res.ok) {
+      // The anchor no longer accepts our JWT (revoked or expired early): re-authenticate next call.
+      if (
+        (res.status === 401 || res.status === 403) &&
+        init.token !== undefined &&
+        init.token === this.jwt?.token
+      ) {
+        this.jwt = null;
+      }
       throw new Error(
         `${method} ${path} → ${res.status}: ${text.slice(0, 300)}`,
       );

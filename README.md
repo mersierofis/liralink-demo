@@ -52,6 +52,7 @@ USDC → TRY settlement is a SEP-24 **withdraw** per paid link. The flow is SEP-
 - **Classic payments + text memos, USDC trustlines, Horizon streaming:** the core memo rail and the payment listener (cursor-persisted, idempotent per operation).
 - **Soroban smart contract (Rust, soroban-sdk):** `contracts/invoice` with admin-auth `create`/`cancel`, payer-auth `pay` through the **USDC Stellar Asset Contract**, RPC `getEvents` polling, and TS bindings in `packages/invoice-client`.
 - **SEP-1 / SEP-10 / SEP-24:** anchor discovery, web auth with challenge verification, and interactive withdraw, all in `backend/src/anchor`.
+- **Stellar standards skill:** [`skills/standards`](skills/standards/SOURCE.md). Its anchor section pointed us to SEP-1/10/24 (SEP-12 not used), and the adapter is checked against those specs in [docs/anchor.md → Spec review](docs/anchor.md). Upstream has no separate anchors skill.
 - **x402 agentic payments:** from the official Stellar skill [`skills/agentic-payments`](skills/agentic-payments/SOURCE.md), vendored unmodified from `stellar/stellar-dev-skill`.
 - **Stellar Wallets Kit / Freighter:** the payer connects and signs in pay-web.
 
