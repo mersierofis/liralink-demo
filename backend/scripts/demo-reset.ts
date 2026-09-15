@@ -2,8 +2,11 @@
  * demo-reset.ts — put the demo merchant's TRY ledger back into a clean state before a demo.
  *
  * Usage:
- *   npm run demo:reset               apply
- *   npm run demo:reset -- --dry-run  print what would change, write nothing
+ *   npm run demo:reset               dry run: print what would change, write nothing
+ *   npm run demo:reset -- --yes      apply
+ *
+ * Writing needs `--yes`. Without it (or with `--dry-run`) the transaction is rolled back, so a
+ * bare run can never change the demo merchant by accident.
  *
  * For demo@liralink.app only, in one transaction:
  *   - deletes mock withdrawals (anchorRef `mock-payout-…`, or never paid out) — panel test runs;
@@ -194,8 +197,13 @@ function mockCompletion(
   };
 }
 
+/** Writing needs an explicit `--yes`; anything else (including `--dry-run`) stays a dry run. */
+export function applyRequested(argv: string[]): boolean {
+  return argv.includes('--yes') && !argv.includes('--dry-run');
+}
+
 async function main(): Promise<void> {
-  const dryRun = process.argv.includes('--dry-run');
+  const dryRun = !applyRequested(process.argv);
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString)
     throw new Error('DATABASE_URL is not set (backend/.env)');
@@ -237,6 +245,11 @@ async function main(): Promise<void> {
     console.log(
       `  availableTRY ${r.availableTRY} = Σ completed netTRY ${r.completedNetTRY}`,
     );
+    if (dryRun) {
+      console.log(
+        '  dry run — nothing written. Re-run with `-- --yes` to apply.',
+      );
+    }
   } finally {
     await prisma.$disconnect();
   }

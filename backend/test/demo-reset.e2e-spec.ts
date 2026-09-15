@@ -6,13 +6,25 @@ import { randomBytes } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { resetDemoMerchant } from '../scripts/demo-reset';
+import { applyRequested, resetDemoMerchant } from '../scripts/demo-reset';
 import { AppModule } from '../src/app.module';
 import { Decimal } from '../src/common/decimal';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { PaymentsService } from '../src/payments/payments.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { InboundOp } from '../src/stellar/matcher';
+
+describe('demo:reset — CLI write guard', () => {
+  const argv = (...flags: string[]) => ['node', 'demo-reset.ts', ...flags];
+
+  it('writes only with --yes; a bare run and --dry-run stay dry', () => {
+    expect(applyRequested(argv('--yes'))).toBe(true);
+    expect(applyRequested(argv())).toBe(false);
+    expect(applyRequested(argv('--dry-run'))).toBe(false);
+    // Both flags: --dry-run wins, so a stale flag can never cause a surprise write.
+    expect(applyRequested(argv('--yes', '--dry-run'))).toBe(false);
+  });
+});
 
 describe('demo:reset (e2e)', () => {
   let app: INestApplication<App>;
