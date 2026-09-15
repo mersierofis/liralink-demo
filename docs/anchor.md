@@ -158,6 +158,45 @@ v3.4.1, SEP-24 v3.8.0. `[x]` = conforms or fixed in this review, `[ ]` = open de
 - Single-process guard only — running two backend instances against one DB would need a DB lock
   around the payment step.
 
+## Saturday checklist — switching the live service to a real anchor (2026-09-19)
+
+Run it in order and stop at the first step that fails. Live stays `ANCHOR_PROVIDER=mock` until
+step 6. Edit the live `backend/.env` with comments on their own lines only (systemd doesn't strip
+inline `#`), and restart `liralink-api` after every `.env` change.
+
+1. **Home domain.** Settle on the anchor's home domain (`ANCHOR_HOME_DOMAIN`, no scheme or path)
+   and make sure it serves our USDC (`USDC_CODE` / `USDC_ISSUER`) for SEP-24 withdraw.
+2. **stellar.toml.** `curl -s https://<domain>/.well-known/stellar.toml` must contain
+   `TRANSFER_SERVER_SEP0024`, `WEB_AUTH_ENDPOINT` and `SIGNING_KEY`, and `NETWORK_PASSPHRASE` (if
+   present) must equal ours. The adapter refuses the anchor otherwise.
+3. **`/info` limits.** `curl -s <TRANSFER_SERVER_SEP0024>/info` → `withdraw.USDC.enabled: true`.
+   Note `min_amount` / `max_amount`: the step 7 link must fall inside them, or the settlement stays
+   `pending` with `blockedReason: 'outside_anchor_limits'`.
+4. **Encoding probe.** Authenticate with SEP-10 as the platform account, then send one
+   `POST /transactions/withdraw/interactive` in each format (`multipart/form-data`, then
+   `application/x-www-form-urlencoded`) with the flow's step 4 fields. Set `ANCHOR_SEP24_ENCODING`
+   to the format that returns `200 { id, url }`, preferring `multipart` if both do. Each accepted
+   probe leaves an `incomplete` withdraw at the anchor. No funds move, and the anchor expires it.
+   Record the status and body of any rejected format under *Observed*.
+5. **KYC automation off.** `ANCHOR_SEP24_TEST_KYC_URL=` (empty). Only testanchor's reference server
+   works with the automated form. With a real anchor, the merchant completes `interactiveUrl` in a
+   browser. Its token is short-lived (15 min on testanchor), so open it right away.
+6. **`ANCHOR_PROVIDER=sep24`.** Before switching, `npm run demo:check` must say READY and the
+   platform account must hold at least the step 7 amount in USDC. Set
+   `ANCHOR_PROVIDER=sep24`, `ANCHOR_HOME_DOMAIN`, `ANCHOR_SEP24_ENCODING` and the empty KYC URL,
+   restart, and check that `/health` reports `settlementMode: auto_payout`. Settlements that already
+   exist keep their provider (the completed mock ones are never re-settled). Only new ones use sep24.
+7. **One small end-to-end link.** Use a merchant with an IBAN and one link inside the step 3 limits
+   (as small as the minimum allows). Pay it, complete `interactiveUrl`, and follow `GET /settlements`
+   to `completed`. Record `anchorRef`, the USDC payment tx hash (check it on Horizon: memo set,
+   destination = `withdraw_anchor_account`), `feeUSDC` and `netTRY`. If the result is `failed` or
+   `amount_mismatch`, or the payment sits in `processing` past the anchor's own deadline, go to step 8.
+8. **Rollback to mock.** Set `ANCHOR_PROVIDER=mock` and restart. `/health` should report
+   `settlementMode: balance`. **Keep `ANCHOR_HOME_DOMAIN` set** until every sep24 settlement is
+   `completed` or `failed`. They resume on the provider they were created with, and the sep24
+   adapter can't reach the anchor without it. Nothing is re-settled on mock. Leave any USDC already
+   sent to the anchor for manual reconciliation using `anchorRef` and the tx hash.
+
 ## Testing
 
 - Unit: `src/anchor/sep24.spec.ts` (status mapping, limits, memo types, fee parsing, JWT expiry),
