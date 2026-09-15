@@ -76,6 +76,9 @@ describe('GET /unallocated (e2e)', () => {
     const links = await prisma.paymentLink.findMany({
       where: { merchantId: { in: merchantIds } },
     });
+    await prisma.usdcWithdrawal.deleteMany({
+      where: { merchantId: { in: merchantIds } },
+    });
     await prisma.paymentAttempt.deleteMany({
       where: { linkCode: { in: links.map((l) => l.code) } },
     });
@@ -181,6 +184,11 @@ describe('GET /unallocated (e2e)', () => {
       new Decimal(0),
     );
     expect(sum.toFixed(7)).toBe(balance.body.unallocatedUSDC);
+    expect(res.body.summary).toEqual({
+      creditedUSDC: '2.5000000',
+      withdrawnUSDC: '0.0000000',
+      remainingUSDC: '2.5000000',
+    });
 
     const page2 = await auth(
       http().get('/api/unallocated?page=2&limit=1'),
@@ -188,5 +196,55 @@ describe('GET /unallocated (e2e)', () => {
     expect(page2.body.total).toBe(2);
     expect(page2.body.items).toHaveLength(1);
     expect(page2.body.items[0].source).toBe('overpaid');
+    // The summary covers every page, not the one returned.
+    expect(page2.body.summary).toEqual(res.body.summary);
+
+    // USDC sent out from 'unallocated': non-failed rows count, failed ones don't.
+    const merchantId = merchantIds[0];
+    for (const [amount, status] of [
+      ['0.7000000', 'completed'],
+      ['0.3000000', 'submitted'],
+      ['1.0000000', 'failed'],
+    ] as const) {
+      await prisma.usdcWithdrawal.create({
+        data: {
+          merchantId,
+          amountUSDC: new Decimal(amount),
+          destination:
+            'GBRZSG7K6ZXJRCMYM2O2HO2DKR7RO2ACZ5FARBMQZBB4YZMDFDXFUTV7',
+          source: 'unallocated',
+          status,
+          txHash: randomBytes(32).toString('hex'),
+          txXdr: 'unused',
+        },
+      });
+    }
+    // A 'saved' withdrawal is not this balance's.
+    await prisma.usdcWithdrawal.create({
+      data: {
+        merchantId,
+        amountUSDC: new Decimal('0.1'),
+        destination: 'GBRZSG7K6ZXJRCMYM2O2HO2DKR7RO2ACZ5FARBMQZBB4YZMDFDXFUTV7',
+        source: 'saved',
+        txHash: randomBytes(32).toString('hex'),
+        txXdr: 'unused',
+      },
+    });
+    // The service debits the stored counter in the same tx; mirror that here.
+    await prisma.merchant.update({
+      where: { id: merchantId },
+      data: { unallocatedUSDC: { decrement: new Decimal('1.0') } },
+    });
+
+    const after = await auth(http().get('/api/unallocated')).expect(200);
+    expect(after.body.summary).toEqual({
+      creditedUSDC: '2.5000000',
+      withdrawnUSDC: '1.0000000',
+      remainingUSDC: '1.5000000',
+    });
+    const balanceAfter = await auth(http().get('/api/balance')).expect(200);
+    expect(after.body.summary.remainingUSDC).toBe(
+      balanceAfter.body.unallocatedUSDC,
+    );
   });
 });
