@@ -1,8 +1,21 @@
 import { CheckCircle2, ExternalLink, Share2 } from 'lucide-react'
-import type { Payment, PayQuote } from '@/api/types'
+import type { PayRail, Payment, PayQuote } from '@/api/types'
 import { formatTRY, formatUSDCDisplay, shortAddress } from '@/stellar/format'
 import { Button } from '@/components/ui/button'
 import { CopyButton } from './CopyButton'
+
+function railLabel(rail: PayRail): string {
+  switch (rail) {
+    case 'memo':
+      return 'Paid via Stellar payment'
+    case 'contract':
+      return 'Paid via smart contract'
+    case 'x402':
+      return 'Paid by an AI agent'
+    default:
+      return 'Paid'
+  }
+}
 
 export function PaidReceipt({
   quote,
@@ -37,6 +50,9 @@ export function PaidReceipt({
       <div>
         <p className="text-xl font-semibold">Paid</p>
         <p className="text-sm text-muted-foreground">to {quote.merchantName}</p>
+        {p?.rail ? (
+          <p className="mt-1 text-xs font-medium text-slate-600">{railLabel(p.rail)}</p>
+        ) : null}
       </div>
       <div className="w-full rounded-lg border bg-muted/40 px-4 py-3 text-sm">
         <p className="font-medium">{formatTRY(quote.amountTRY)}</p>
