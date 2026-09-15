@@ -1,74 +1,96 @@
 # LiraLink
 
-Turkish merchant creates a TRY payment link; a customer abroad pays it in USDC on Stellar testnet; the merchant sees a TRY balance to withdraw to their IBAN. Built for Rise In x Stellar Pro (Istanbul, 19–20 Sept 2026), team MersiErOfis.
+A Turkish merchant or exporter creates a **payment link** priced in Turkish lira. A customer **abroad** opens it on their phone and pays in **USDC on Stellar** from their own wallet. LiraLink detects the on-chain payment within seconds, converts it to lira through a **Stellar anchor (SEP-24)**, and the merchant sees a **TRY balance** paid out to their IBAN. The merchant never touches crypto: they sell in lira and receive lira. Built for Rise In × Stellar Pro (Istanbul, 19–20 Sept 2026) by team MersiErOfis. **Testnet only.**
 
-Read `docs/00-PROJECT.md` first — it is the shared source of truth for product, architecture, data model and API contract. Then read your own file:
+## Live
 
-- `docs/01-BACKEND.md` — backend (Hasan)
-- `docs/02-PAY-WEB.md` — pay-web (Yunus)
-- `docs/03-MERCHANT-WEB.md` — merchant-web (Vuslat)
+| | URL |
+|---|---|
+| Merchant panel | https://merchant-web.tutorialplatform.com |
+| Payer page | https://pay-web.tutorialplatform.com |
+| API docs (Swagger) | https://liralink-api.tutorialplatform.com/docs |
+| API health | https://liralink-api.tutorialplatform.com/api/health |
 
-## Team — MersiErOfis
+## Architecture
 
-- **Hasan** — backend + integrations: NestJS API, Stellar Horizon listener, anchor (SEP-24), Soroban invoice contract.
-- **Vuslat** — merchant web (React + Vite) and the pitch deck.
-- **Yunus** — payer web (React + Vite PWA) with Stellar Wallets Kit.
-
-## Toolchain (binding on all three apps)
-
-- Node **22.23.2** — run `nvm use` (reads the root `.nvmrc`) before installing anything.
-- `@stellar/stellar-sdk@16.3.0` in both `backend/` and `pay-web/` — must match major versions; the backend's payment listener parses the transactions pay-web builds.
-
-See `docs/00-PROJECT.md` §8 for the full pinned-toolchain table and the reasoning behind each pin.
-
-## Layout
-
-```
-docs/            product + per-app specs, docs/api.types.ts (generated backend DTOs)
-backend/         NestJS (Hasan)
-merchant-web/    React + Vite (Vuslat)
-pay-web/         React + Vite PWA (Yunus)
-contracts/       Soroban invoice contract (phase 2 — required)
-docker-compose.yml   Postgres 16 for local dev
+```mermaid
+flowchart LR
+  MW["merchant-web<br/>React · merchant"] -->|REST| API
+  PW["pay-web<br/>React PWA · payer wallet"] -->|REST| API
+  AG["AI agent<br/>x402 client"] -->|HTTP 402| API
+  PW -. "signs USDC payment" .-> H
+  API["LiraLink API<br/>NestJS + PostgreSQL"] --> H["Horizon<br/>payment stream"]
+  API --> RPC["Soroban RPC<br/>getEvents"]
+  RPC --> C["invoice contract<br/>(Soroban, testnet)"]
+  API -->|"SEP-1 · SEP-10 · SEP-24"| AN["Anchor<br/>USDC → TRY"]
+  API -->|"verify / settle"| X["x402.org facilitator<br/>(Coinbase, testnet)"]
+  X --> H
 ```
 
-## Local Postgres
+## Three payment rails
 
-```
-nvm use
-docker compose up -d
-```
+The same link can be paid three ways. Each row is a real testnet payment to a live link:
 
-Each app has its own README with its own run instructions.
+| Rail | How the payer pays | Testnet tx |
+|---|---|---|
+| **contract** | `invoice.pay(code, payer)` on the Soroban invoice contract; the API sees the `paid` event over RPC | [`86a52cb9…`](https://stellar.expert/explorer/testnet/tx/86a52cb90e16be242a957630b9addce55fd43b5686c85fdef876e54ecb01bfca) |
+| **memo** | Classic USDC payment with text memo = link code; the API matches it from the Horizon stream | [`4ad45c72…`](https://stellar.expert/explorer/testnet/tx/4ad45c721428ca476e04e2cf5c0fbcff489bac2c74119e82ff72de0d4608594c) (memo `WQ6M53V2`) |
+| **x402** | An agent calls `GET /api/pay/:code/agent` → `402` → signs a USDC transfer → the facilitator settles → `200` receipt | [`289f442b…`](https://stellar.expert/explorer/testnet/tx/289f442b395f7f64bd87a0c0980aabc266dca651d274fbed7582b21b18b1526e) |
 
-## Agentic payments (x402)
+Amounts are locked at link creation (exact-amount policy): underpayments keep the link open for a top-up, and any excess is parked as `unallocatedUSDC`, never silently converted.
+The memo rail is the wallet-friendly default. x402 is **experimental**: it runs on Stellar testnet only, through the x402.org facilitator operated by Coinbase, which we don't control. Try it from `backend/`:
+`AGENT_SECRET=$(stellar keys secret payer) npm run agent:pay -- --code <CODE> --api https://liralink-api.tutorialplatform.com/api`.
 
-The same payment link can be paid by an AI agent over HTTP 402 ([x402](https://www.x402.org/)):
-`GET /api/pay/:code/agent` answers `402 Payment Required` with Stellar payment requirements (USDC,
-`stellar:testnet`); the agent signs the USDC transfer and retries; the backend credits the link and
-answers `200` with a receipt. Demo, from `backend/` with a payer that holds testnet USDC:
+## Anchor integration
 
-```
-AGENT_SECRET=$(stellar keys secret payer) npm run agent:pay -- --code <CODE>
-```
+USDC → TRY settlement is a SEP-24 **withdraw** per paid link. The flow is SEP-1 discovery, anchor `/info` limit checks, then SEP-10 auth with the platform key. The API opens an interactive withdraw, sends the USDC to the anchor with its memo, and follows the anchor to `completed` with the fee netted (`feeUSDC`, `netTRY`). Full walkthrough: **[docs/anchor.md](docs/anchor.md)**.
 
-(`--api https://liralink-api.tutorialplatform.com/api` to pay against the live API instead of
-localhost.)
-
-> **Testnet only, third-party facilitator.** Verification and settlement go through the
-> **x402.org facilitator operated by Coinbase**, which serves Stellar testnet only. We don't run or
-> control it — if it is down the route answers `503`; a settle that times out is kept `pending`
-> and reconciled every minute. There is no mainnet path yet. Details: `backend/README.md`.
-
-## Regulatory note
-
-LiraLink is structured as an **export-collection** flow, not a domestic crypto payment. The payer is always **abroad** and pays in USDC from their own wallet; the merchant only ever sells in and receives **Turkish lira** and never touches crypto. Conversion USDC→TRY runs through a **licensed Stellar anchor** — the regulated party in the flow. Turkish rules restricting crypto as a *domestic* payment instrument are designed around domestic settlement, which this flow does not touch.
-
-Custody is a documented hackathon simplification (one platform account holds USDC, merchant balances are ledger rows); the roadmap is **non-custodial** per-link SEP-24 withdrawal so funds go straight to the anchor. This is our engineering framing, **not legal advice — a formal legal opinion will be obtained before any production launch.**
+**Manual-KYC flow (the real-anchor path):** the settlement stays `processing` and exposes the anchor's `interactiveUrl`. The merchant panel shows a "Complete verification" button. The person fills in KYC and bank details on the anchor's own page, and the backend picks it up within a minute and finishes the payout. Nothing is ever marked failed while the anchor waits. The signed payment is stored before submit, so a retry can never pay twice. The SEP-24 flow runs end-to-end against the SDF test anchor (`testanchor.stellar.org`, a live e2e settles 1 testnet USDC to `completed`), and a manual e2e walks the browser KYC path. The live demo runs the `mock` adapter (same interface) until a licensed TRY anchor is wired in.
 
 ## Stellar skills used
 
-Skill docs applied from the Stellar handbook, under `skills/` (expanded as we integrate more):
+- **Classic payments + text memos, USDC trustlines, Horizon streaming:** the core memo rail and the payment listener (cursor-persisted, idempotent per operation).
+- **Soroban smart contract (Rust, soroban-sdk):** `contracts/invoice` with admin-auth `create`/`cancel`, payer-auth `pay` through the **USDC Stellar Asset Contract**, RPC `getEvents` polling, and TS bindings in `packages/invoice-client`.
+- **SEP-1 / SEP-10 / SEP-24:** anchor discovery, web auth with challenge verification, and interactive withdraw, all in `backend/src/anchor`.
+- **x402 agentic payments:** from the official Stellar skill [`skills/agentic-payments`](skills/agentic-payments/SOURCE.md), vendored unmodified from `stellar/stellar-dev-skill`.
+- **Stellar Wallets Kit / Freighter:** the payer connects and signs in pay-web.
 
-- `skills/standards/SKILL.md` — Stellar standards: classic USDC payment with text memo, assets/trustlines, SEP-10 auth.
-- `skills/anchors/SKILL.md` — anchor integration: USDC→TRY settlement via SEP-24 withdraw (mock adapter now, real TRY anchor after Workshop #3).
+Contract ID, wasm hash and deploy txs: **[docs/deployments.md](docs/deployments.md)** (`CDKZYQI4…45EJ`, testnet).
+
+## Regulatory note
+
+The payer is **outside Turkey** and pays in USDC from their own wallet. The merchant only ever sells in and receives **Turkish lira** and never touches crypto. Conversion runs through a **licensed Stellar anchor**, which is the regulated party in the flow. Turkish rules restricting crypto as a *domestic* payment instrument therefore do not apply to this flow.
+
+Custody is a documented hackathon simplification: one platform account holds USDC, and merchant balances are ledger rows (see `backend/README.md`). This is our engineering framing, **not legal advice**. A formal legal opinion will be obtained before any production launch.
+
+## Team — MersiErOfis
+
+- **Hasan** ([@movilidadagil](https://github.com/movilidadagil)): backend + integrations (API, Horizon listener, SEP-24 anchor, Soroban contract, x402)
+- **Vuslat** ([@vuslattt](https://github.com/vuslattt)): merchant web + pitch deck
+- **Yunus** ([@Yunussoydan33](https://github.com/Yunussoydan33)): payer web (PWA, Stellar Wallets Kit)
+
+## Roadmap
+
+- **Real TRY anchor:** swap the mock adapter for a licensed Stellar anchor with a TRY off-ramp (the SEP-24 adapter is already built and tested).
+- **Per-merchant accounts:** replace the single custody account with segregated on-chain balances per merchant, then non-custodial per-link SEP-24 withdrawals.
+- **DeFindex:** deposit each settlement's auto-save share into a DeFindex USDC vault instead of only ledgering it.
+- **Soroswap path payments:** let the payer pay with any asset, routed to USDC.
+- **Reopen expired KYC sessions:** `POST /settlements/:id/reopen` ([#10](https://github.com/mersierofis/liralink-demo/issues/10)).
+
+---
+
+## For developers
+
+Read `docs/00-PROJECT.md` first (product, data model, API contract §6), then your app brief: `docs/01-BACKEND.md` (Hasan), `docs/02-PAY-WEB.md` (Yunus), `docs/03-MERCHANT-WEB.md` (Vuslat).
+
+```
+docs/            specs, api.types.ts, anchor.md, deployments.md
+backend/         NestJS API              → backend/README.md
+merchant-web/    React + Vite            → merchant-web/README.md
+pay-web/         React + Vite PWA        → pay-web/README.md
+contracts/       Soroban invoice contract
+packages/        invoice-client (generated TS bindings)
+skills/          vendored Stellar skills
+```
+
+Toolchain (binding): Node **22.23.2** (`nvm use`), `@stellar/stellar-sdk@16.3.0` in both backend and pay-web (see `docs/00-PROJECT.md` §8). Local Postgres: `docker compose up -d`.
