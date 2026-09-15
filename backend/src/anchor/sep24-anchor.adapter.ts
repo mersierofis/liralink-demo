@@ -49,6 +49,31 @@ interface Endpoints {
 
 type Persist = (patch: AnchorSettlementPatch) => Promise<void>;
 
+type FormEncoding = 'multipart' | 'urlencoded';
+const OTHER_ENCODING: Record<FormEncoding, FormEncoding> = {
+  multipart: 'urlencoded',
+  urlencoded: 'multipart',
+};
+
+/** A non-2xx anchor response; `status` tells a rejected request from a transient failure. */
+class AnchorHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly body: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** The anchor did not understand the body's format: 400/415/422, or a 5xx whose body names the
+ * content type (testanchor answers an unsupported one with 500). Worth one try in the other format. */
+function formatRejected(err: unknown): err is AnchorHttpError {
+  if (!(err instanceof AnchorHttpError)) return false;
+  if ([400, 415, 422].includes(err.status)) return true;
+  return err.status >= 500 && /content-type/i.test(err.body);
+}
+
 /**
  * USDC → fiat through a SEP-24 anchor (docs/anchor.md): SEP-1 stellar.toml → SEP-10 auth with the
  * platform key → interactive withdraw → USDC payment to the anchor's account + memo → poll
@@ -67,12 +92,16 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
   private endpoints: Endpoints | null = null;
   private jwt: { token: string; expiresAt: number } | null = null;
   private readonly kycSubmitted = new Set<string>();
+  // ANCHOR_SEP24_ENCODING; switched for this process once the anchor rejects it and takes the other.
+  private withdrawEncoding: FormEncoding;
 
   constructor(config: ConfigService) {
     this.homeDomain = config.get<string>('ANCHOR_HOME_DOMAIN') ?? '';
     this.testKycUrl = (
       config.get<string>('ANCHOR_SEP24_TEST_KYC_URL') ?? ''
     ).replace(/\/$/, '');
+    this.withdrawEncoding =
+      config.get<FormEncoding>('ANCHOR_SEP24_ENCODING') ?? 'multipart';
     this.keypair = Keypair.fromSecret(
       config.get<string>('PLATFORM_ACCOUNT_SECRET')!,
     );
@@ -185,25 +214,51 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
     const block = withdrawBlock(info, this.usdc.getCode(), state.amountUSDC);
     if (block) return { status: 'blocked', ...block };
 
-    const res = await this.request<{ id: string; url: string }>(
+    const res = await this.openWithdraw(
       `${transferServer}/transactions/withdraw/interactive`,
       {
-        method: 'POST',
-        token: await this.token(),
-        body: {
-          asset_code: this.usdc.getCode(),
-          asset_issuer: this.usdc.getIssuer(),
-          account: this.keypair.publicKey(),
-          amount: state.amountUSDC.toFixed(7),
-          lang: 'en',
-        },
+        asset_code: this.usdc.getCode(),
+        asset_issuer: this.usdc.getIssuer()!,
+        account: this.keypair.publicKey(),
+        amount: state.amountUSDC.toFixed(7),
+        lang: 'en',
       },
     );
     await persist({ anchorRef: res.id, interactiveUrl: res.url });
     this.logger.log(
-      `Settlement ${state.id}: SEP-24 withdraw ${res.id} opened on ${this.homeDomain} for ${state.amountUSDC.toFixed(7)} USDC`,
+      `Settlement ${state.id}: SEP-24 withdraw ${res.id} opened on ${this.homeDomain} (${this.withdrawEncoding}) for ${state.amountUSDC.toFixed(7)} USDC`,
     );
     return null;
+  }
+
+  /** SEP-24 wants a form body, never JSON. ANCHOR_SEP24_ENCODING picks the format (default
+   * multipart/form-data; the spec's example is urlencoded). If the anchor rejects that format
+   * (formatRejected), the same fields go once in the other one — a rejected request opened nothing,
+   * so the retry cannot open a second withdraw — and the format that worked is kept. */
+  private async openWithdraw(
+    url: string,
+    fields: Record<string, string>,
+  ): Promise<{ id: string; url: string }> {
+    const token = await this.token();
+    const post = (encoding: FormEncoding) =>
+      this.request<{ id: string; url: string }>(url, {
+        method: 'POST',
+        token,
+        form: { encoding, fields },
+      });
+    const first = this.withdrawEncoding;
+    try {
+      return await post(first);
+    } catch (err) {
+      if (!formatRejected(err)) throw err;
+      const other = OTHER_ENCODING[first];
+      this.logger.warn(
+        `${this.homeDomain} rejected the ${first} withdraw body (${err.message}) — retrying ${other}`,
+      );
+      const res = await post(other);
+      this.withdrawEncoding = other;
+      return res;
+    }
   }
 
   /** testanchor only: posts the interactive form (KYC + bank details) to its reference server,
@@ -410,16 +465,34 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
 
   private async request<T>(
     url: string,
-    init: { method?: string; token?: string; body?: unknown } = {},
+    init: {
+      method?: string;
+      token?: string;
+      body?: unknown;
+      form?: { encoding: FormEncoding; fields: Record<string, string> };
+    } = {},
   ): Promise<T> {
     const method = init.method ?? 'GET';
     const headers: Record<string, string> = {};
     if (init.token) headers.authorization = `Bearer ${init.token}`;
-    if (init.body !== undefined) headers['content-type'] = 'application/json';
+    let body: string | FormData | URLSearchParams | undefined;
+    if (init.form) {
+      // No content-type header: fetch derives it from the body (with the multipart boundary).
+      if (init.form.encoding === 'multipart') {
+        body = new FormData();
+        for (const [k, v] of Object.entries(init.form.fields))
+          body.append(k, v);
+      } else {
+        body = new URLSearchParams(init.form.fields);
+      }
+    } else if (init.body !== undefined) {
+      headers['content-type'] = 'application/json';
+      body = JSON.stringify(init.body);
+    }
     const res = await fetch(url, {
       method,
       headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      body,
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     const text = await res.text();
@@ -433,7 +506,9 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
       ) {
         this.jwt = null;
       }
-      throw new Error(
+      throw new AnchorHttpError(
+        res.status,
+        text,
         `${method} ${path} → ${res.status}: ${text.slice(0, 300)}`,
       );
     }

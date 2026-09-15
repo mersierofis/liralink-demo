@@ -29,6 +29,11 @@ export const envSchema = z.object({
   // testanchor.stellar.org only: its reference server, where the interactive KYC form posts — the
   // backend fills that form in itself. Empty (real anchors): the merchant completes interactiveUrl.
   ANCHOR_SEP24_TEST_KYC_URL: z.string().optional().default(''),
+  // Body format of the SEP-24 interactive withdraw for this anchor (never JSON). A rejected format
+  // still gets one try in the other one.
+  ANCHOR_SEP24_ENCODING: z
+    .enum(['multipart', 'urlencoded'])
+    .default('multipart'),
   ANCHOR_MOCK_DELAY_MS: z.coerce.number().int().nonnegative().default(3000),
 
   LINK_DEFAULT_EXPIRY_HOURS: z.coerce.number().positive().default(24),
