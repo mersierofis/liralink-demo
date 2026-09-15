@@ -18,6 +18,14 @@ export interface UnallocatedCredit {
   createdAt: Date;
 }
 
+/** creditedUSDC = Σ of every credit row; withdrawnUSDC = Σ non-failed USDC withdrawals from
+ * 'unallocated'; remainingUSDC = credited − withdrawn, which is what /balance shows. */
+export interface UnallocatedSummary {
+  creditedUSDC: Decimal;
+  withdrawnUSDC: Decimal;
+  remainingUSDC: Decimal;
+}
+
 interface CreditRow {
   id: string;
   source: UnallocatedSource;
@@ -42,7 +50,7 @@ export class UnallocatedService {
     merchantId: string,
     page: number,
     limit: number,
-  ): Promise<Paginated<UnallocatedCredit>> {
+  ): Promise<Paginated<UnallocatedCredit> & { summary: UnallocatedSummary }> {
     const credits = Prisma.sql`
       SELECT a.id, 'stray' AS source, a."txHash", a."amountUSDC"::text AS "amountUSDC",
              l.code AS "linkCode", regexp_replace(a.reason, '^stray: ', '') AS reason,
@@ -62,17 +70,29 @@ export class UnallocatedService {
         ) p ON true
        WHERE l."merchantId" = ${merchantId} AND l."receivedUSDC" > l."quotedUSDC"`;
 
-    const [rows, [{ total }]] = await Promise.all([
+    const [rows, [{ total, credited }], withdrawn] = await Promise.all([
       this.prisma.$queryRaw<CreditRow[]>`
         SELECT * FROM (${credits}) c
          ORDER BY "createdAt" DESC, id
          LIMIT ${limit} OFFSET ${(page - 1) * limit}`,
-      this.prisma.$queryRaw<{ total: number }[]>`
-        SELECT count(*)::int AS total FROM (${credits}) c`,
+      this.prisma.$queryRaw<{ total: number; credited: string }[]>`
+        SELECT count(*)::int AS total, coalesce(sum("amountUSDC"::numeric), 0)::text AS credited
+          FROM (${credits}) c`,
+      this.prisma.usdcWithdrawal.aggregate({
+        where: { merchantId, source: 'unallocated', status: { not: 'failed' } },
+        _sum: { amountUSDC: true },
+      }),
     ]);
+    const creditedUSDC = new Decimal(credited);
+    const withdrawnUSDC = withdrawn._sum.amountUSDC ?? new Decimal(0);
     return {
       items: rows.map((r) => ({ ...r, amountUSDC: new Decimal(r.amountUSDC) })),
       total,
+      summary: {
+        creditedUSDC,
+        withdrawnUSDC,
+        remainingUSDC: creditedUSDC.minus(withdrawnUSDC),
+      },
     };
   }
 }

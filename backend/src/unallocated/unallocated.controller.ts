@@ -16,7 +16,7 @@ export class UnallocatedController {
     @CurrentMerchant() merchant: Merchant,
     @Query() query: PaginationQueryDto,
   ) {
-    const { items, total } = await this.unallocatedService.findAll(
+    const { items, total, summary } = await this.unallocatedService.findAll(
       merchant.id,
       query.page ?? 1,
       query.limit ?? 20,
@@ -24,6 +24,12 @@ export class UnallocatedController {
     return {
       items: items.map((c) => UnallocatedCreditDto.fromCredit(c)),
       total,
+      // Over all pages, not just this one — reconciles with Balance.unallocatedUSDC.
+      summary: {
+        creditedUSDC: summary.creditedUSDC.toFixed(7),
+        withdrawnUSDC: summary.withdrawnUSDC.toFixed(7),
+        remainingUSDC: summary.remainingUSDC.toFixed(7),
+      },
     };
   }
 }

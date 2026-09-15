@@ -43,7 +43,7 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
 | GET | `/settlements?page=&limit=` | Bearer | `{ items: Settlement[], total }` |
 | POST | `/withdrawals` | Bearer | `201 Withdrawal` (`{ amountTRY, iban? }`) |
 | GET | `/withdrawals?page=&limit=` | Bearer | `{ items: Withdrawal[], total }` |
-| GET | `/unallocated?page=&limit=` | Bearer | `{ items: UnallocatedCredit[], total }` |
+| GET | `/unallocated?page=&limit=` | Bearer | `UnallocatedList` — `{ items: UnallocatedCredit[], total, summary }` |
 | POST | `/usdc-withdrawals` | Bearer | `201 UsdcWithdrawal` (`{ amountUSDC, destination, source: 'saved' \| 'unallocated' }`) |
 | GET | `/usdc-withdrawals?page=&limit=` | Bearer | `{ items: UsdcWithdrawal[], total }` |
 
@@ -84,7 +84,9 @@ Base URL: `http://localhost:3000/api` (note the global `/api` prefix). Swagger a
   completed a link. `reason` is human-readable text for a detail column, not an enum. The demo
   merchant has two rows: a 2.0 stray (VHHCJ8QZ) and a 1.0 overpayment (WPQRQDT4). The rows list
   credits; once the merchant sends some of it out (`POST /usdc-withdrawals`), `unallocatedUSDC` is
-  that sum minus the non-failed withdrawals from `'unallocated'`.
+  that sum minus the non-failed withdrawals from `'unallocated'`. `summary` does that math for you,
+  over all pages: `{ creditedUSDC, withdrawnUSDC, remainingUSDC }` (7 dp), with `remainingUSDC` equal
+  to `Balance.unallocatedUSDC` — show it next to the card; don't add up rows in the UI.
 - **`POST /usdc-withdrawals`** sends USDC (never TRY) from the platform account to the merchant's own
   Stellar wallet, paid from `savedUSDC` or `unallocatedUSDC`. The amount leaves that balance
   **immediately**. The response usually comes back after ~5 s with `status: 'completed'` and a
