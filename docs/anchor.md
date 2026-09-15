@@ -99,6 +99,38 @@ settlements count toward `Balance.paidOutTRY` (by `netTRY`), never `availableTRY
 `POST /withdrawals` returns `409 "Payouts are automatic in this mode"`. The bucket follows the
 provider a settlement was created with, so switching `ANCHOR_PROVIDER` never moves completed money.
 
+## Spec review — SEP-1 / SEP-10 / SEP-24 (2026-09-15)
+
+Basis: the specs `skills/standards` routes anchor integrations to (there is no `anchors` skill
+upstream — see `skills/standards/SOURCE.md`), at stellar-protocol `0dc4592c`: SEP-1 v2.7.0, SEP-10
+v3.4.1, SEP-24 v3.8.0. `[x]` = conforms or fixed in this review, `[ ]` = open deviation.
+
+**SEP-1 (stellar.toml)**
+- [x] `https://{domain}/.well-known/stellar.toml`, 100 KB cap, no redirects (SDK `Resolver`).
+- [x] Requires `TRANSFER_SERVER_SEP0024`, `WEB_AUTH_ENDPOINT`, `SIGNING_KEY`; refuses another `NETWORK_PASSPHRASE`.
+- [x] **Fixed:** the fetch had no timeout → 20 s, like every other anchor call.
+- [x] **Fixed:** cached for the process lifetime → re-read hourly; a rotated `SIGNING_KEY` drops the cached JWT.
+
+**SEP-10 (web auth)**
+- [x] Challenge verified before signing: server signature, sequence 0, `<home domain> auth`, `web_auth_domain`, finite time bounds (SDK `readChallengeTx`).
+- [x] **Fixed:** the challenge's optional `network_passphrase` was not compared → refuses to sign for another network.
+- [x] **Fixed:** a JWT the anchor rejects (401/403) stayed cached until `exp` → cleared; the next run re-authenticates.
+- [x] No `client_domain`: custodial — anchors identify custodial clients by the JWT `sub`.
+- [ ] The omnibus platform account authenticates without a memo / `M…` `sub`, so every merchant is one anchor user (one KYC identity). **Before a real anchor** → [#21](https://github.com/mersierofis/liralink-demo/issues/21).
+
+**SEP-24 (interactive withdraw)**
+- [x] `/info` read unauthenticated; `enabled` / `min_amount` / `max_amount` → `blockedReason` before anything is opened.
+- [x] USDC sent only at `pending_user_transfer_start`, to `withdraw_anchor_account` with `withdraw_memo` / `withdraw_memo_type`; `amount_in` must equal the settlement amount.
+- [x] Status polling: `GET /transaction?id=` every 3 s for 2 min, then once a minute (the spec allows polling instead of callbacks; no `on_change_callback`, so no callback signature to verify).
+- [x] Terminal: `completed`, `refunded`, `expired`, `error`, `no_market`, `too_small`, `too_large`; every other `pending_*` and `on_hold` waits.
+- [x] Fee from `fee_details` (else the deprecated `amount_fee`), accepted only in our USDC.
+- [ ] Withdraw request body is JSON; the spec says form-encoded ("should"). testanchor accepts JSON → [#23](https://github.com/mersierofis/liralink-demo/issues/23).
+- [ ] Error handling: any non-2xx counts as transient, so a 4xx on opening the withdraw or a 404 on `/transaction` is retried forever → [#23](https://github.com/mersierofis/liralink-demo/issues/23).
+- [ ] `pending_user`, `on_hold`, `more_info_url`, `user_action_required_by` are not shown to the merchant → [#22](https://github.com/mersierofis/liralink-demo/issues/22).
+- [ ] `refunds` ignored: partial refunds are not netted, refunded USDC is not credited back → [#24](https://github.com/mersierofis/liralink-demo/issues/24).
+- [ ] KYC re-open: the interactive URL token is short-lived and a stale withdraw is never re-opened → [#10](https://github.com/mersierofis/liralink-demo/issues/10) (`user_action_required_by`, #22, gives the deadline).
+- Not used: SEP-12 (the anchor collects KYC on its own interactive page), SEP-6, SEP-38 quotes, claimable balances (deposit-only).
+
 ## Known gaps / open decisions
 
 - **Anchor limits vs. link sizes.** Links above the anchor's per-transaction maximum (10 USDC on

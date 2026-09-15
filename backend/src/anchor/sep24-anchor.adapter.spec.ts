@@ -1,5 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { Keypair } from '@stellar/stellar-sdk';
+import { Keypair, StellarToml } from '@stellar/stellar-sdk';
 import { Decimal } from '../common/decimal';
 import type { Merchant } from '../generated/prisma/client';
 import type { SettlementAnchorState } from './anchor.adapter';
@@ -53,6 +53,88 @@ function resume(
     save,
   });
 }
+
+describe('Sep24AnchorAdapter — SEP-1 / SEP-10 conformance', () => {
+  interface Internals {
+    jwt: { token: string; expiresAt: number } | null;
+    getEndpoints(): Promise<{ authEndpoint: string; signingKey: string }>;
+    token(): Promise<string>;
+    request(url: string, init?: { token?: string }): Promise<unknown>;
+  }
+  const make = () =>
+    adapterSeeing({
+      id: 'anchor-1',
+      status: 'incomplete',
+    }) as unknown as Internals;
+  const toml = (signingKey: string) => ({
+    TRANSFER_SERVER_SEP0024: 'https://anchor.example/sep24',
+    WEB_AUTH_ENDPOINT: 'https://anchor.example/auth',
+    SIGNING_KEY: signingKey,
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('reads stellar.toml with a timeout, re-reads it hourly, and drops the JWT when SIGNING_KEY rotates', async () => {
+    const oldKey = Keypair.random().publicKey();
+    const newKey = Keypair.random().publicKey();
+    const resolve = jest
+      .spyOn(StellarToml.Resolver, 'resolve')
+      .mockResolvedValueOnce(toml(oldKey))
+      .mockResolvedValueOnce(toml(newKey));
+    let now = 1_000_000;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    const adapter = make();
+
+    await adapter.getEndpoints();
+    await adapter.getEndpoints();
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve).toHaveBeenCalledWith('testanchor.stellar.org', {
+      timeout: 20_000,
+    });
+
+    adapter.jwt = { token: 'issued-under-old-key', expiresAt: now + 3_600_000 };
+    now += 60 * 60_000;
+    expect((await adapter.getEndpoints()).signingKey).toBe(newKey);
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(adapter.jwt).toBeNull();
+  });
+
+  it('refuses to sign a SEP-10 challenge that names another network', async () => {
+    const adapter = make();
+    jest.spyOn(adapter, 'getEndpoints').mockResolvedValue({
+      authEndpoint: 'https://anchor.example/auth',
+      signingKey: Keypair.random().publicKey(),
+    });
+    const request = jest.spyOn(adapter, 'request').mockResolvedValue({
+      transaction: 'not-even-xdr',
+      network_passphrase: 'Public Global Stellar Network ; September 2015',
+    });
+    // Rejected on the passphrase, before the challenge is parsed or anything is signed or posted.
+    await expect(adapter.token()).rejects.toThrow(
+      'SEP-10 challenge is for "Public Global Stellar Network ; September 2015"',
+    );
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('forgets a JWT the anchor rejects with 401/403, keeps it on other errors', async () => {
+    const adapter = make();
+    const fetch = jest.spyOn(globalThis, 'fetch');
+    const url = 'https://anchor.example/sep24/transaction?id=1';
+
+    adapter.jwt = { token: 'jwt', expiresAt: Date.now() + 3_600_000 };
+    fetch.mockResolvedValueOnce(
+      new Response('{"error":"down"}', { status: 503 }),
+    );
+    await expect(adapter.request(url, { token: 'jwt' })).rejects.toThrow('503');
+    expect(adapter.jwt?.token).toBe('jwt');
+
+    fetch.mockResolvedValueOnce(
+      new Response('{"type":"authentication_required"}', { status: 403 }),
+    );
+    await expect(adapter.request(url, { token: 'jwt' })).rejects.toThrow('403');
+    expect(adapter.jwt).toBeNull();
+  });
+});
 
 describe('Sep24AnchorAdapter — interactive step at a real anchor (no test KYC URL)', () => {
   const waiting = {
