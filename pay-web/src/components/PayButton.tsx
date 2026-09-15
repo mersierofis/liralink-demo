@@ -3,24 +3,56 @@ import { Button } from '@/components/ui/button'
 import { formatUSDCDisplay } from '@/stellar/format'
 
 /**
- * Primary action is the classic memo rail.
- * Contract rail can be plugged in later as the primary path when ready for demo.
+ * When contract rail is active: primary = Pay via contract, secondary = memo fallback.
+ * Otherwise a single memo Pay button.
  */
 export function PayButton({
   amountUSDC,
   disabled,
   loading,
+  loadingRail,
   hasContractRail,
   onPayMemo,
+  onPayContract,
 }: {
   amountUSDC: string
   disabled?: boolean
   loading?: boolean
-  /** Kept for call-site compatibility; contract rail UI is hidden until demo-ready. */
+  loadingRail?: 'memo' | 'contract' | null
   hasContractRail?: boolean
   onPayMemo: () => void
+  onPayContract?: () => void
 }) {
-  void hasContractRail
+  if (hasContractRail && onPayContract) {
+    return (
+      <div className="space-y-2">
+        <Button
+          type="button"
+          className="w-full"
+          size="lg"
+          disabled={disabled || loading}
+          onClick={onPayContract}
+        >
+          {loadingRail === 'contract' ? <Loader2 className="animate-spin" /> : null}
+          {loadingRail === 'contract'
+            ? 'Signing contract…'
+            : `Pay ${formatUSDCDisplay(amountUSDC)} USDC via contract`}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full"
+          size="lg"
+          disabled={disabled || loading}
+          onClick={onPayMemo}
+        >
+          {loadingRail === 'memo' ? <Loader2 className="animate-spin" /> : null}
+          {loadingRail === 'memo' ? 'Signing…' : 'Pay with memo (fallback)'}
+        </Button>
+      </div>
+    )
+  }
+
   return (
     <Button
       type="button"

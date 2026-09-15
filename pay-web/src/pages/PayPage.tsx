@@ -16,6 +16,7 @@ import { HttpError } from '@/api/client'
 import { payAmountUSDC, usePayQuote, usePayStatus, useSubmitted } from '@/api/hooks'
 import type { PayQuote } from '@/api/types'
 import { buildPaymentXdr, loadUsdcBalance, submitSignedXdr } from '@/stellar/buildPayment'
+import { isContractRailEnabled, payViaContract } from '@/stellar/payViaContract'
 import { useWallet } from '@/stellar/useWallet'
 
 type UiPhase = 'quote' | 'paying' | 'paid'
@@ -46,6 +47,7 @@ export function PayPage() {
   const [phase, setPhase] = useState<UiPhase>('quote')
   const [payError, setPayError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [loadingRail, setLoadingRail] = useState<'memo' | 'contract' | null>(null)
   const [pendingTxHash, setPendingTxHash] = useState<string | null>(null)
   const [balances, setBalances] = useState<{
     hasTrustline: boolean
@@ -92,10 +94,12 @@ export function PayPage() {
     }
   }, [wallet.address, quote])
 
-  async function runPay(opts?: { skipWallet?: boolean }) {
+  async function runPay(opts?: { skipWallet?: boolean; rail?: 'memo' | 'contract' }) {
     if (!mergedQuote || !code) return
+    const rail = opts?.rail ?? 'memo'
     setPayError(null)
     setSubmitting(true)
+    setLoadingRail(rail)
     try {
       if (opts?.skipWallet || mockPay) {
         const fakeHash = `mock${Date.now().toString(16).padStart(56, '0')}`.slice(0, 64)
@@ -108,10 +112,23 @@ export function PayPage() {
         setPayError('Connect a wallet first.')
         return
       }
-      const xdr = await buildPaymentXdr(mergedQuote, wallet.address)
-      const signed = await wallet.signXdr(xdr)
-      const { hash } = await submitSignedXdr(signed)
-      console.info('[pay-web] submitted Stellar tx', hash)
+
+      let hash: string
+      if (rail === 'contract') {
+        const result = await payViaContract({
+          quote: mergedQuote,
+          payer: wallet.address,
+          signXdr: wallet.signXdr,
+        })
+        hash = result.hash
+      } else {
+        const xdr = await buildPaymentXdr(mergedQuote, wallet.address)
+        const signed = await wallet.signXdr(xdr)
+        const result = await submitSignedXdr(signed)
+        hash = result.hash
+      }
+
+      console.info('[pay-web] submitted Stellar tx', hash, 'rail=', rail)
       setPendingTxHash(hash)
       setPhase('paying')
       void submitted.mutateAsync(hash).catch(() => undefined)
@@ -121,6 +138,7 @@ export function PayPage() {
       setPayError(err instanceof Error ? err.message : 'Payment failed')
     } finally {
       setSubmitting(false)
+      setLoadingRail(null)
     }
   }
 
@@ -248,7 +266,18 @@ export function PayPage() {
                 <ErrorState title="Wallet" message={wallet.error} onRetry={() => void wallet.connect()} />
               ) : null}
               {payError ? (
-                <ErrorState title="Payment failed" message={payError} onRetry={() => void runPay()} />
+                <ErrorState
+                  title="Payment failed"
+                  message={payError}
+                  onRetry={() =>
+                    void runPay({
+                      rail:
+                        isContractRailEnabled() && mergedQuote.rails.contract
+                          ? 'contract'
+                          : 'memo',
+                    })
+                  }
+                />
               ) : null}
               <PayButton
                 amountUSDC={payAmountUSDC(mergedQuote)}
@@ -261,8 +290,12 @@ export function PayPage() {
                       submitting
                 }
                 loading={submitting}
-                hasContractRail={Boolean(mergedQuote.rails.contract)}
-                onPayMemo={() => void runPay({ skipWallet: mockPay })}
+                loadingRail={loadingRail}
+                hasContractRail={
+                  isContractRailEnabled() && Boolean(mergedQuote.rails.contract)
+                }
+                onPayMemo={() => void runPay({ skipWallet: mockPay, rail: 'memo' })}
+                onPayContract={() => void runPay({ rail: 'contract' })}
               />
               {mockPay ? (
                 <p className="text-center text-[11px] text-muted-foreground">
