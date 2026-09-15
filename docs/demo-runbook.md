@@ -38,8 +38,9 @@ Live: [merchant panel](https://merchant-web.tutorialplatform.com) ·
 4. **Payer wallet (Yunus's phone):** Freighter on **Testnet**, ≥ 20 USDC and a little XLM, USDC
    trustline to `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`. Setup steps:
    `pay-web/README.md`. 20 USDC covers the demo link plus retries; `demo:check` only enforces 5.
-5. **Health is green** — no uptime monitor is configured for LiraLink (no UptimeRobot in the repo).
-   Check by hand, and keep the tab open:
+5. **Health is green.** Open the [UptimeRobot dashboard](https://dashboard.uptimerobot.com/monitors)
+   — 3 monitors: API health, merchant-web, pay-web. All three must be up. Backup, and the only
+   check that shows *why*:
    ```
    curl -s https://liralink-api.tutorialplatform.com/api/health
    ```
