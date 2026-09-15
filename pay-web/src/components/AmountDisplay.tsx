@@ -22,7 +22,9 @@ export function AmountDisplay({ quote }: { quote: PayQuote }) {
       <p className="text-xs text-muted-foreground">
         1 USDC = {formatFxRate(quote.fxRate)} TRY
       </p>
-      {quote.status === 'open' && <QuoteCountdown expiresAt={quote.quoteExpiresAt} />}
+      {quote.status === 'open' && (
+        <QuoteCountdown quoteExpiresAt={quote.quoteExpiresAt} linkExpiresAt={quote.expiresAt} />
+      )}
     </div>
   )
 }
