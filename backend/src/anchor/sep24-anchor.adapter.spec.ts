@@ -10,9 +10,13 @@ const ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 const OUR_USDC = `stellar:USDC:${ISSUER}`;
 
 /** An adapter whose anchor always reports `txn` — no network involved. */
-function adapterSeeing(txn: Sep24Transaction): Sep24AnchorAdapter {
+function adapterSeeing(
+  txn: Sep24Transaction,
+  config: Record<string, string> = {},
+): Sep24AnchorAdapter {
   const adapter = new Sep24AnchorAdapter(
     new ConfigService({
+      ...config,
       ANCHOR_HOME_DOMAIN: 'testanchor.stellar.org',
       PLATFORM_ACCOUNT_SECRET: Keypair.random().secret(),
       HORIZON_URL: 'https://horizon-testnet.stellar.org',
@@ -169,11 +173,11 @@ describe('Sep24AnchorAdapter — withdraw request encoding (form, never JSON)', 
   const opened = () =>
     json({ id: 'anchor-1', url: 'https://anchor.example/w?token=t' });
 
-  function setup() {
-    const adapter = adapterSeeing({
-      id: 'anchor-1',
-      status: 'incomplete',
-    }) as unknown as Internals;
+  function setup(config: Record<string, string> = {}) {
+    const adapter = adapterSeeing(
+      { id: 'anchor-1', status: 'incomplete' },
+      config,
+    ) as unknown as Internals;
     jest.spyOn(adapter, 'getEndpoints').mockResolvedValue({
       transferServer: 'https://anchor.example/sep24',
       authEndpoint: 'https://anchor.example/auth',
@@ -285,6 +289,54 @@ describe('Sep24AnchorAdapter — withdraw request encoding (form, never JSON)', 
       'FormData',
     ]);
   });
+
+  it('starts with ANCHOR_SEP24_ENCODING=urlencoded and falls back to multipart on a 4xx', async () => {
+    const { adapter, fetch, withdraws } = setup({
+      ANCHOR_SEP24_ENCODING: 'urlencoded',
+    });
+    fetch
+      .mockResolvedValueOnce(info())
+      .mockResolvedValueOnce(opened())
+      .mockResolvedValueOnce(info())
+      .mockResolvedValueOnce(json({ error: 'asset_code is required' }, 400))
+      .mockResolvedValueOnce(opened())
+      .mockResolvedValueOnce(info())
+      .mockResolvedValueOnce(opened());
+
+    for (let run = 0; run < 3; run++) {
+      expect(await adapter.start(state, merchant, jest.fn())).toBeNull();
+    }
+    expect(withdraws().map((i) => i.body?.constructor.name)).toEqual([
+      'URLSearchParams',
+      'URLSearchParams',
+      'FormData',
+      'FormData',
+    ]);
+  });
+
+  it.each([
+    ['multipart', 'FormData', 'URLSearchParams'],
+    ['urlencoded', 'URLSearchParams', 'FormData'],
+  ])(
+    'tries the other format once on a 5xx that mentions Content-Type (starting %s)',
+    async (encoding, first, other) => {
+      const { adapter, fetch, withdraws } = setup({
+        ANCHOR_SEP24_ENCODING: encoding,
+      });
+      fetch
+        .mockResolvedValueOnce(info())
+        .mockResolvedValueOnce(
+          json({ error: "Content-Type 'text/x' is not supported" }, 500),
+        )
+        .mockResolvedValueOnce(opened());
+
+      expect(await adapter.start(state, merchant, jest.fn())).toBeNull();
+      expect(withdraws().map((i) => i.body?.constructor.name)).toEqual([
+        first,
+        other,
+      ]);
+    },
+  );
 });
 
 describe('Sep24AnchorAdapter — interactive step at a real anchor (no test KYC URL)', () => {

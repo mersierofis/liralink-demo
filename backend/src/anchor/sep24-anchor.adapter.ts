@@ -50,17 +50,28 @@ interface Endpoints {
 type Persist = (patch: AnchorSettlementPatch) => Promise<void>;
 
 type FormEncoding = 'multipart' | 'urlencoded';
-// Statuses meaning "your multipart body was not understood" → the withdraw is retried urlencoded.
-const FORM_REJECTED = new Set([400, 415, 422]);
+const OTHER_ENCODING: Record<FormEncoding, FormEncoding> = {
+  multipart: 'urlencoded',
+  urlencoded: 'multipart',
+};
 
 /** A non-2xx anchor response; `status` tells a rejected request from a transient failure. */
 class AnchorHttpError extends Error {
   constructor(
     readonly status: number,
+    readonly body: string,
     message: string,
   ) {
     super(message);
   }
+}
+
+/** The anchor did not understand the body's format: 400/415/422, or a 5xx whose body names the
+ * content type (testanchor answers an unsupported one with 500). Worth one try in the other format. */
+function formatRejected(err: unknown): err is AnchorHttpError {
+  if (!(err instanceof AnchorHttpError)) return false;
+  if ([400, 415, 422].includes(err.status)) return true;
+  return err.status >= 500 && /content-type/i.test(err.body);
 }
 
 /**
@@ -81,14 +92,16 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
   private endpoints: Endpoints | null = null;
   private jwt: { token: string; expiresAt: number } | null = null;
   private readonly kycSubmitted = new Set<string>();
-  // multipart/form-data per SEP-24; switched for this process once the anchor rejects multipart.
-  private withdrawEncoding: FormEncoding = 'multipart';
+  // ANCHOR_SEP24_ENCODING; switched for this process once the anchor rejects it and takes the other.
+  private withdrawEncoding: FormEncoding;
 
   constructor(config: ConfigService) {
     this.homeDomain = config.get<string>('ANCHOR_HOME_DOMAIN') ?? '';
     this.testKycUrl = (
       config.get<string>('ANCHOR_SEP24_TEST_KYC_URL') ?? ''
     ).replace(/\/$/, '');
+    this.withdrawEncoding =
+      config.get<FormEncoding>('ANCHOR_SEP24_ENCODING') ?? 'multipart';
     this.keypair = Keypair.fromSecret(
       config.get<string>('PLATFORM_ACCOUNT_SECRET')!,
     );
@@ -218,9 +231,10 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
     return null;
   }
 
-  /** SEP-24 wants a form body — multipart/form-data (its example is urlencoded), never JSON. If the
-   * anchor rejects multipart (400/415/422), the same fields go urlencoded; a 4xx opened nothing, so
-   * the retry cannot open a second withdraw. The encoding that worked is kept for later withdraws. */
+  /** SEP-24 wants a form body, never JSON. ANCHOR_SEP24_ENCODING picks the format (default
+   * multipart/form-data; the spec's example is urlencoded). If the anchor rejects that format
+   * (formatRejected), the same fields go once in the other one — a rejected request opened nothing,
+   * so the retry cannot open a second withdraw — and the format that worked is kept. */
   private async openWithdraw(
     url: string,
     fields: Record<string, string>,
@@ -232,18 +246,17 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
         token,
         form: { encoding, fields },
       });
-    if (this.withdrawEncoding === 'urlencoded') return post('urlencoded');
+    const first = this.withdrawEncoding;
     try {
-      return await post('multipart');
+      return await post(first);
     } catch (err) {
-      if (!(err instanceof AnchorHttpError) || !FORM_REJECTED.has(err.status)) {
-        throw err;
-      }
+      if (!formatRejected(err)) throw err;
+      const other = OTHER_ENCODING[first];
       this.logger.warn(
-        `${this.homeDomain} rejected the multipart withdraw body (${err.message}) — retrying urlencoded`,
+        `${this.homeDomain} rejected the ${first} withdraw body (${err.message}) — retrying ${other}`,
       );
-      const res = await post('urlencoded');
-      this.withdrawEncoding = 'urlencoded';
+      const res = await post(other);
+      this.withdrawEncoding = other;
       return res;
     }
   }
@@ -495,6 +508,7 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
       }
       throw new AnchorHttpError(
         res.status,
+        text,
         `${method} ${path} → ${res.status}: ${text.slice(0, 300)}`,
       );
     }
