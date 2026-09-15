@@ -40,7 +40,10 @@ auto-save).
    home domain, web-auth domain) **before** the platform key signs it; `POST {WEB_AUTH_ENDPOINT}`
    returns the JWT (cached until a minute before `exp`).
 4. **Open the withdraw.** `POST {TRANSFER_SERVER_SEP0024}/transactions/withdraw/interactive`
-   `{ asset_code: USDC, asset_issuer, account: <platform>, amount, lang: en }` →
+   `{ asset_code: USDC, asset_issuer, account: <platform>, amount, lang: en }` as
+   `multipart/form-data` (never JSON). If the anchor answers 400/415/422, the same fields are
+   retried once as `application/x-www-form-urlencoded` (a 4xx opened nothing), and the process
+   keeps using urlencoded after that works. →
    `{ id, url }`. Saved as `Settlement.anchorRef` / `interactiveUrl`. Status `incomplete`.
 5. **Interactive step (KYC + bank details).**
    - *Real anchor* (`ANCHOR_SEP24_TEST_KYC_URL` unset): a person completes `interactiveUrl`. The
@@ -124,7 +127,7 @@ v3.4.1, SEP-24 v3.8.0. `[x]` = conforms or fixed in this review, `[ ]` = open de
 - [x] Status polling: `GET /transaction?id=` every 3 s for 2 min, then once a minute (the spec allows polling instead of callbacks; no `on_change_callback`, so no callback signature to verify).
 - [x] Terminal: `completed`, `refunded`, `expired`, `error`, `no_market`, `too_small`, `too_large`; every other `pending_*` and `on_hold` waits.
 - [x] Fee from `fee_details` (else the deprecated `amount_fee`), accepted only in our USDC.
-- [ ] Withdraw request body is JSON; the spec says form-encoded ("should"). testanchor accepts JSON → [#23](https://github.com/mersierofis/liralink-demo/issues/23).
+- [x] Withdraw request body is `multipart/form-data`, falling back to `application/x-www-form-urlencoded` on 400/415/422 — never JSON (was JSON; [#23](https://github.com/mersierofis/liralink-demo/issues/23)).
 - [ ] Error handling: any non-2xx counts as transient, so a 4xx on opening the withdraw or a 404 on `/transaction` is retried forever → [#23](https://github.com/mersierofis/liralink-demo/issues/23).
 - [ ] `pending_user`, `on_hold`, `more_info_url`, `user_action_required_by` are not shown to the merchant → [#22](https://github.com/mersierofis/liralink-demo/issues/22).
 - [ ] `refunds` ignored: partial refunds are not netted, refunded USDC is not credited back → [#24](https://github.com/mersierofis/liralink-demo/issues/24).

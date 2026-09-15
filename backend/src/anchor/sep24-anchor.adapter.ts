@@ -49,6 +49,20 @@ interface Endpoints {
 
 type Persist = (patch: AnchorSettlementPatch) => Promise<void>;
 
+type FormEncoding = 'multipart' | 'urlencoded';
+// Statuses meaning "your multipart body was not understood" → the withdraw is retried urlencoded.
+const FORM_REJECTED = new Set([400, 415, 422]);
+
+/** A non-2xx anchor response; `status` tells a rejected request from a transient failure. */
+class AnchorHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 /**
  * USDC → fiat through a SEP-24 anchor (docs/anchor.md): SEP-1 stellar.toml → SEP-10 auth with the
  * platform key → interactive withdraw → USDC payment to the anchor's account + memo → poll
@@ -67,6 +81,8 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
   private endpoints: Endpoints | null = null;
   private jwt: { token: string; expiresAt: number } | null = null;
   private readonly kycSubmitted = new Set<string>();
+  // multipart/form-data per SEP-24; switched for this process once the anchor rejects multipart.
+  private withdrawEncoding: FormEncoding = 'multipart';
 
   constructor(config: ConfigService) {
     this.homeDomain = config.get<string>('ANCHOR_HOME_DOMAIN') ?? '';
@@ -185,25 +201,51 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
     const block = withdrawBlock(info, this.usdc.getCode(), state.amountUSDC);
     if (block) return { status: 'blocked', ...block };
 
-    const res = await this.request<{ id: string; url: string }>(
+    const res = await this.openWithdraw(
       `${transferServer}/transactions/withdraw/interactive`,
       {
-        method: 'POST',
-        token: await this.token(),
-        body: {
-          asset_code: this.usdc.getCode(),
-          asset_issuer: this.usdc.getIssuer(),
-          account: this.keypair.publicKey(),
-          amount: state.amountUSDC.toFixed(7),
-          lang: 'en',
-        },
+        asset_code: this.usdc.getCode(),
+        asset_issuer: this.usdc.getIssuer()!,
+        account: this.keypair.publicKey(),
+        amount: state.amountUSDC.toFixed(7),
+        lang: 'en',
       },
     );
     await persist({ anchorRef: res.id, interactiveUrl: res.url });
     this.logger.log(
-      `Settlement ${state.id}: SEP-24 withdraw ${res.id} opened on ${this.homeDomain} for ${state.amountUSDC.toFixed(7)} USDC`,
+      `Settlement ${state.id}: SEP-24 withdraw ${res.id} opened on ${this.homeDomain} (${this.withdrawEncoding}) for ${state.amountUSDC.toFixed(7)} USDC`,
     );
     return null;
+  }
+
+  /** SEP-24 wants a form body — multipart/form-data (its example is urlencoded), never JSON. If the
+   * anchor rejects multipart (400/415/422), the same fields go urlencoded; a 4xx opened nothing, so
+   * the retry cannot open a second withdraw. The encoding that worked is kept for later withdraws. */
+  private async openWithdraw(
+    url: string,
+    fields: Record<string, string>,
+  ): Promise<{ id: string; url: string }> {
+    const token = await this.token();
+    const post = (encoding: FormEncoding) =>
+      this.request<{ id: string; url: string }>(url, {
+        method: 'POST',
+        token,
+        form: { encoding, fields },
+      });
+    if (this.withdrawEncoding === 'urlencoded') return post('urlencoded');
+    try {
+      return await post('multipart');
+    } catch (err) {
+      if (!(err instanceof AnchorHttpError) || !FORM_REJECTED.has(err.status)) {
+        throw err;
+      }
+      this.logger.warn(
+        `${this.homeDomain} rejected the multipart withdraw body (${err.message}) — retrying urlencoded`,
+      );
+      const res = await post('urlencoded');
+      this.withdrawEncoding = 'urlencoded';
+      return res;
+    }
   }
 
   /** testanchor only: posts the interactive form (KYC + bank details) to its reference server,
@@ -410,16 +452,34 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
 
   private async request<T>(
     url: string,
-    init: { method?: string; token?: string; body?: unknown } = {},
+    init: {
+      method?: string;
+      token?: string;
+      body?: unknown;
+      form?: { encoding: FormEncoding; fields: Record<string, string> };
+    } = {},
   ): Promise<T> {
     const method = init.method ?? 'GET';
     const headers: Record<string, string> = {};
     if (init.token) headers.authorization = `Bearer ${init.token}`;
-    if (init.body !== undefined) headers['content-type'] = 'application/json';
+    let body: string | FormData | URLSearchParams | undefined;
+    if (init.form) {
+      // No content-type header: fetch derives it from the body (with the multipart boundary).
+      if (init.form.encoding === 'multipart') {
+        body = new FormData();
+        for (const [k, v] of Object.entries(init.form.fields))
+          body.append(k, v);
+      } else {
+        body = new URLSearchParams(init.form.fields);
+      }
+    } else if (init.body !== undefined) {
+      headers['content-type'] = 'application/json';
+      body = JSON.stringify(init.body);
+    }
     const res = await fetch(url, {
       method,
       headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      body,
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     const text = await res.text();
@@ -433,7 +493,8 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
       ) {
         this.jwt = null;
       }
-      throw new Error(
+      throw new AnchorHttpError(
+        res.status,
         `${method} ${path} → ${res.status}: ${text.slice(0, 300)}`,
       );
     }

@@ -136,6 +136,157 @@ describe('Sep24AnchorAdapter — SEP-1 / SEP-10 conformance', () => {
   });
 });
 
+describe('Sep24AnchorAdapter — withdraw request encoding (form, never JSON)', () => {
+  interface Internals {
+    getEndpoints(): Promise<unknown>;
+    token(): Promise<string>;
+    start(
+      state: SettlementAnchorState,
+      merchant: Merchant,
+      persist: jest.Mock,
+    ): Promise<unknown>;
+  }
+  const FIELDS = ['asset_code', 'asset_issuer', 'account', 'amount', 'lang'];
+  const state: SettlementAnchorState = {
+    id: 's1',
+    amountUSDC: new Decimal('1.0000000'),
+    anchorRef: null,
+    interactiveUrl: null,
+    anchorStatus: null,
+    anchorTxHash: null,
+    anchorTxXdr: null,
+  };
+  const merchant = {
+    id: 'm1',
+    iban: 'TR330006100519786457841326',
+  } as Merchant;
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status });
+  const info = () =>
+    json({
+      withdraw: { USDC: { enabled: true, min_amount: 1, max_amount: 10 } },
+    });
+  const opened = () =>
+    json({ id: 'anchor-1', url: 'https://anchor.example/w?token=t' });
+
+  function setup() {
+    const adapter = adapterSeeing({
+      id: 'anchor-1',
+      status: 'incomplete',
+    }) as unknown as Internals;
+    jest.spyOn(adapter, 'getEndpoints').mockResolvedValue({
+      transferServer: 'https://anchor.example/sep24',
+      authEndpoint: 'https://anchor.example/auth',
+      signingKey: Keypair.random().publicKey(),
+      fetchedAt: Date.now(),
+    });
+    jest.spyOn(adapter, 'token').mockResolvedValue('jwt');
+    const fetch = jest.spyOn(globalThis, 'fetch');
+    /** The init of every POST /transactions/withdraw/interactive, in order. */
+    const withdraws = () =>
+      fetch.mock.calls
+        // The adapter always calls fetch with a string URL.
+        .filter(([url]) =>
+          (url as string).endsWith('/transactions/withdraw/interactive'),
+        )
+        .map(([, init]) => init!);
+    return { adapter, fetch, withdraws };
+  }
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('opens the withdraw as multipart/form-data with the SEP-24 fields', async () => {
+    const { adapter, fetch, withdraws } = setup();
+    fetch.mockResolvedValueOnce(info()).mockResolvedValueOnce(opened());
+    const persist = jest.fn();
+
+    expect(await adapter.start(state, merchant, persist)).toBeNull();
+    const [init] = withdraws();
+    expect(init.body).toBeInstanceOf(FormData);
+    const form = init.body as FormData;
+    expect(Object.fromEntries(FIELDS.map((k) => [k, form.get(k)]))).toEqual({
+      asset_code: 'USDC',
+      asset_issuer: ISSUER,
+      account: form.get('account'),
+      amount: '1.0000000',
+      lang: 'en',
+    });
+    expect(form.get('account')).toMatch(/^G[A-Z2-7]{55}$/);
+    // No JSON content type — fetch sets multipart/form-data with the boundary.
+    expect(init.headers).toEqual({ authorization: 'Bearer jwt' });
+    expect(persist).toHaveBeenCalledWith({
+      anchorRef: 'anchor-1',
+      interactiveUrl: 'https://anchor.example/w?token=t',
+    });
+  });
+
+  it.each([400, 415, 422])(
+    'retries urlencoded when the anchor rejects multipart with %i, and keeps urlencoded',
+    async (status) => {
+      const { adapter, fetch, withdraws } = setup();
+      fetch
+        .mockResolvedValueOnce(info())
+        .mockResolvedValueOnce(
+          json({ error: 'asset_code is required' }, status),
+        )
+        .mockResolvedValueOnce(opened())
+        .mockResolvedValueOnce(info())
+        .mockResolvedValueOnce(opened());
+
+      expect(await adapter.start(state, merchant, jest.fn())).toBeNull();
+      expect(await adapter.start(state, merchant, jest.fn())).toBeNull();
+
+      const [first, retry, next] = withdraws();
+      expect(first.body).toBeInstanceOf(FormData);
+      expect(retry.body).toBeInstanceOf(URLSearchParams);
+      expect(Object.fromEntries(retry.body as URLSearchParams)).toMatchObject({
+        asset_code: 'USDC',
+        asset_issuer: ISSUER,
+        amount: '1.0000000',
+        lang: 'en',
+      });
+      expect(retry.headers).toEqual({ authorization: 'Bearer jwt' });
+      expect(next.body).toBeInstanceOf(URLSearchParams);
+      expect(withdraws()).toHaveLength(3);
+    },
+  );
+
+  it.each([401, 403, 500, 503])(
+    'does not retry on %i — one withdraw request, the error propagates',
+    async (status) => {
+      const { adapter, fetch, withdraws } = setup();
+      fetch
+        .mockResolvedValueOnce(info())
+        .mockResolvedValueOnce(json({ error: 'nope' }, status));
+
+      await expect(adapter.start(state, merchant, jest.fn())).rejects.toThrow(
+        String(status),
+      );
+      expect(withdraws()).toHaveLength(1);
+    },
+  );
+
+  it('stays on multipart when the urlencoded retry is rejected too', async () => {
+    const { adapter, fetch, withdraws } = setup();
+    fetch
+      .mockResolvedValueOnce(info())
+      .mockResolvedValueOnce(json({ error: 'amount too small' }, 400))
+      .mockResolvedValueOnce(json({ error: 'amount too small' }, 400))
+      .mockResolvedValueOnce(info())
+      .mockResolvedValueOnce(opened());
+
+    await expect(adapter.start(state, merchant, jest.fn())).rejects.toThrow(
+      '400',
+    );
+    expect(await adapter.start(state, merchant, jest.fn())).toBeNull();
+    expect(withdraws().map((i) => i.body?.constructor.name)).toEqual([
+      'FormData',
+      'URLSearchParams',
+      'FormData',
+    ]);
+  });
+});
+
 describe('Sep24AnchorAdapter — interactive step at a real anchor (no test KYC URL)', () => {
   const waiting = {
     interactiveUrl: 'https://anchor.example/withdraw?token=t',
