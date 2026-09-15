@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
-    "preview": "vite preview --port 5174"
+    "preview": "vite preview --port 5174",
+    "postinstall": "npm --prefix ../packages/invoice-client install --no-fund --no-audit && npm --prefix ../packages/invoice-client run build"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^1.9.5",
