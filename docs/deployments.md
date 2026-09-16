@@ -63,3 +63,28 @@ STELLAR_ACCOUNT=<platform secret from backend/.env> \
 ```
 
 A redeploy creates a new contract id: update this table, `INVOICE_CONTRACT_ID`, and regenerate `packages/invoice-client`. Existing invoices do not carry over.
+
+## TR Mock Anchor — testnet (`ANCHOR_PROVIDER=sep6`)
+
+The hackathon's official TRY anchor. Not deployed by us — recorded here because LiraLink sends
+real testnet USDC to it and because the addresses below are what a settlement must be checked
+against on Horizon.
+
+| Field | Value |
+|---|---|
+| Home domain | `tr-mock-anchor.fly.dev` (`ANCHOR_HOME_DOMAIN`) |
+| Protocol | SEP-6 (programmatic), with SEP-1 / SEP-10 / SEP-38; no SEP-24 endpoint |
+| Network | testnet — `Test SDF Network ; September 2015` |
+| **Anchor treasury** | `GCLCZEQZ2THTEDAOFI66LACNPLY4OBKN7VKLEZFMBIHYKYQOW2W7T3Z6` — every withdraw payment goes here, with a `MEMO_ID` the anchor issues |
+| SEP-10 signing key | `GDXYO6FJCNXZEWGXD54GT76FGFYLOLSOGSOJLNQ6WGHCGEQPO7NTE73M` |
+| USDC issuer | `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` — the same issuer LiraLink uses |
+| Endpoints | `/auth` (SEP-10) · `/sep6` (`TRANSFER_SERVER`) · `/sep12` (auto-approves) · `/sep38` (`ANCHOR_QUOTE_SERVER`) |
+| Operator | third party (hackathon organisers) — a sandbox; no real money moves |
+| Skill | [`skills/anchor-tr`](../skills/anchor-tr/SOURCE.md) |
+
+Both accounts in the toml's `ACCOUNTS` (`GCLCZEQZ…` treasury and `GDXYO6FJ…` signing key) are
+the anchor's, not ours. The platform account `GDWV6USF…34N2` is the only key LiraLink signs with;
+it authenticates over SEP-10 and sends the USDC.
+
+Nothing here is under our control: the operator can reset or retire this anchor at any time, and
+it is testnet-only. Flow, limits and the observed quirks: [`anchor.md`](anchor.md) → *SEP-6*.

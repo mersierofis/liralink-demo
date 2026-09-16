@@ -1,20 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { setTimeout as sleep } from 'node:timers/promises';
-import {
-  Asset,
-  BASE_FEE,
-  Horizon,
-  Keypair,
-  Operation,
-  StellarToml,
-  Transaction,
-  TransactionBuilder,
-  WebAuth,
-} from '@stellar/stellar-sdk';
-import { Decimal } from '../common/decimal';
+import { Asset, Horizon } from '@stellar/stellar-sdk';
 import { Merchant } from '../generated/prisma/client';
-import { expired, findTransaction, submitSigned } from '../stellar/signed-tx';
 import {
   AnchorAdapter,
   AnchorSettlementPatch,
@@ -22,49 +10,26 @@ import {
   SettlementAnchorState,
 } from './anchor.adapter';
 import {
-  jwtExpiresAt,
-  sep24FeeUSDC,
-  Sep24Info,
-  sep24Phase,
-  Sep24Transaction,
-  withdrawBlock,
-  withdrawMemo,
-} from './sep24';
+  AnchorHttpError,
+  AnchorRequestInit,
+  AnchorSession,
+  FormEncoding,
+} from './anchor-session';
+import { Sep24Info, Sep24Transaction, sep24FeeUSDC, sep24Phase } from './sep24';
+import { withdrawBlock } from './transfer';
+import { WithdrawPaymentDeps, sendWithdrawPayment } from './withdraw-payment';
 
 // One settleToTRY call follows the anchor this long, then hands back `processing`; the
 // settlement job resumes it every minute.
 const FOLLOW_FOR_MS = 120_000;
 const POLL_EVERY_MS = 3_000;
-const PAYMENT_TIMEOUT_S = 300;
-const HTTP_TIMEOUT_MS = 20_000;
-// stellar.toml is re-read this often, so a rotated SIGNING_KEY or moved endpoint needs no restart.
-const TOML_TTL_MS = 60 * 60_000;
 
-interface Endpoints {
-  transferServer: string;
-  authEndpoint: string;
-  signingKey: string;
-  fetchedAt: number;
-}
-
-type Persist = (patch: AnchorSettlementPatch) => Promise<void>;
-
-type FormEncoding = 'multipart' | 'urlencoded';
 const OTHER_ENCODING: Record<FormEncoding, FormEncoding> = {
   multipart: 'urlencoded',
   urlencoded: 'multipart',
 };
 
-/** A non-2xx anchor response; `status` tells a rejected request from a transient failure. */
-class AnchorHttpError extends Error {
-  constructor(
-    readonly status: number,
-    readonly body: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+type Persist = (patch: AnchorSettlementPatch) => Promise<void>;
 
 /** The anchor did not understand the body's format: 400/415/422, or a 5xx whose body names the
  * content type (testanchor answers an unsupported one with 500). Worth one try in the other format. */
@@ -83,28 +48,23 @@ function formatRejected(err: unknown): err is AnchorHttpError {
 export class Sep24AnchorAdapter implements AnchorAdapter {
   readonly name = 'sep24' as const;
   private readonly logger = new Logger(Sep24AnchorAdapter.name);
-  private readonly homeDomain: string;
   private readonly testKycUrl: string;
-  private readonly keypair: Keypair;
   private readonly horizon: Horizon.Server;
   private readonly networkPassphrase: string;
   private readonly usdc: Asset;
-  private endpoints: Endpoints | null = null;
-  private jwt: { token: string; expiresAt: number } | null = null;
   private readonly kycSubmitted = new Set<string>();
   // ANCHOR_SEP24_ENCODING; switched for this process once the anchor rejects it and takes the other.
   private withdrawEncoding: FormEncoding;
 
-  constructor(config: ConfigService) {
-    this.homeDomain = config.get<string>('ANCHOR_HOME_DOMAIN') ?? '';
+  constructor(
+    config: ConfigService,
+    private readonly session: AnchorSession,
+  ) {
     this.testKycUrl = (
       config.get<string>('ANCHOR_SEP24_TEST_KYC_URL') ?? ''
     ).replace(/\/$/, '');
     this.withdrawEncoding =
       config.get<FormEncoding>('ANCHOR_SEP24_ENCODING') ?? 'multipart';
-    this.keypair = Keypair.fromSecret(
-      config.get<string>('PLATFORM_ACCOUNT_SECRET')!,
-    );
     this.horizon = new Horizon.Server(config.get<string>('HORIZON_URL')!);
     this.networkPassphrase = config.get<string>('NETWORK_PASSPHRASE')!;
     this.usdc = new Asset(
@@ -175,7 +135,12 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
           await this.submitTestKyc(state, merchant);
           break;
         case 'send_funds': {
-          const failed = await this.sendFunds(state, txn, persist);
+          const failed = await sendWithdrawPayment(
+            this.deps(),
+            state,
+            txn,
+            persist,
+          );
           if (failed) return failed;
           break;
         }
@@ -219,14 +184,14 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
       {
         asset_code: this.usdc.getCode(),
         asset_issuer: this.usdc.getIssuer()!,
-        account: this.keypair.publicKey(),
+        account: this.session.account(),
         amount: state.amountUSDC.toFixed(7),
         lang: 'en',
       },
     );
     await persist({ anchorRef: res.id, interactiveUrl: res.url });
     this.logger.log(
-      `Settlement ${state.id}: SEP-24 withdraw ${res.id} opened on ${this.homeDomain} (${this.withdrawEncoding}) for ${state.amountUSDC.toFixed(7)} USDC`,
+      `Settlement ${state.id}: SEP-24 withdraw ${res.id} opened on ${this.session.homeDomain} (${this.withdrawEncoding}) for ${state.amountUSDC.toFixed(7)} USDC`,
     );
     return null;
   }
@@ -253,7 +218,7 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
       if (!formatRejected(err)) throw err;
       const other = OTHER_ENCODING[first];
       this.logger.warn(
-        `${this.homeDomain} rejected the ${first} withdraw body (${err.message}) — retrying ${other}`,
+        `${this.session.homeDomain} rejected the ${first} withdraw body (${err.message}) — retrying ${other}`,
       );
       const res = await post(other);
       this.withdrawEncoding = other;
@@ -304,76 +269,6 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
     this.logger.log(`Settlement ${state.id}: test KYC submitted for ${ref}`);
   }
 
-  /**
-   * Pays the anchor. The signed XDR is persisted before submitting, so a retry resubmits the
-   * same transaction (same sequence number — it can land at most once). A new payment is built
-   * only when the saved one provably never landed: not on Horizon and a ledger has closed after
-   * its time bound. Returns a result only when the settlement must fail.
-   */
-  private async sendFunds(
-    state: SettlementAnchorState,
-    txn: Sep24Transaction,
-    persist: Persist,
-  ): Promise<SettleResult | null> {
-    if (state.anchorTxXdr && state.anchorTxHash) {
-      const onLedger = await findTransaction(this.horizon, state.anchorTxHash);
-      if (onLedger?.successful) return null; // sent; waiting for the anchor to see it
-      const saved = new Transaction(state.anchorTxXdr, this.networkPassphrase);
-      if (!onLedger && !(await expired(this.horizon, saved))) {
-        await this.submit(state, saved);
-        return null;
-      }
-      this.logger.warn(
-        `Settlement ${state.id}: payment ${state.anchorTxHash} ${onLedger ? 'failed on-ledger' : 'expired unsubmitted'} — building a new one`,
-      );
-    }
-
-    if (!txn.withdraw_anchor_account) {
-      throw new Error(`withdraw ${txn.id}: no withdraw_anchor_account yet`);
-    }
-    if (txn.amount_in && !new Decimal(txn.amount_in).equals(state.amountUSDC)) {
-      return {
-        status: 'failed',
-        ref: txn.id,
-        reason: 'amount_mismatch',
-        detail: `anchor expects ${txn.amount_in} USDC, settlement is ${state.amountUSDC.toFixed(7)} — nothing sent`,
-      };
-    }
-
-    const account = await this.horizon.loadAccount(this.keypair.publicKey());
-    const tx = new TransactionBuilder(account, {
-      fee: BASE_FEE,
-      networkPassphrase: this.networkPassphrase,
-    })
-      .addOperation(
-        Operation.payment({
-          destination: txn.withdraw_anchor_account,
-          asset: this.usdc,
-          amount: state.amountUSDC.toFixed(7),
-        }),
-      )
-      .addMemo(withdrawMemo(txn.withdraw_memo_type, txn.withdraw_memo))
-      .setTimeout(PAYMENT_TIMEOUT_S)
-      .build();
-    tx.sign(this.keypair);
-    await persist({
-      anchorTxXdr: tx.toXDR(),
-      anchorTxHash: tx.hash().toString('hex'),
-    });
-    await this.submit(state, tx);
-    return null;
-  }
-
-  private async submit(
-    state: SettlementAnchorState,
-    tx: Transaction,
-  ): Promise<void> {
-    await submitSigned(this.horizon, tx);
-    this.logger.log(
-      `Settlement ${state.id}: sent ${state.amountUSDC.toFixed(7)} USDC to anchor, tx ${tx.hash().toString('hex')}`,
-    );
-  }
-
   private async getTransaction(id: string): Promise<Sep24Transaction> {
     const { transferServer } = await this.getEndpoints();
     const { transaction } = await this.request<{
@@ -384,134 +279,26 @@ export class Sep24AnchorAdapter implements AnchorAdapter {
     return transaction;
   }
 
-  private async getEndpoints(): Promise<Endpoints> {
-    if (this.endpoints && Date.now() - this.endpoints.fetchedAt < TOML_TTL_MS) {
-      return this.endpoints;
-    }
-    if (!this.homeDomain) {
-      throw new Error(
-        'ANCHOR_HOME_DOMAIN is required for ANCHOR_PROVIDER=sep24',
-      );
-    }
-    const toml = await StellarToml.Resolver.resolve(this.homeDomain, {
-      timeout: HTTP_TIMEOUT_MS,
-    });
-    const transferServer = toml.TRANSFER_SERVER_SEP0024;
-    const authEndpoint = toml.WEB_AUTH_ENDPOINT;
-    const signingKey = toml.SIGNING_KEY;
-    if (!transferServer || !authEndpoint || !signingKey) {
-      throw new Error(
-        `${this.homeDomain} stellar.toml lacks TRANSFER_SERVER_SEP0024, WEB_AUTH_ENDPOINT or SIGNING_KEY`,
-      );
-    }
-    const anchorNetwork = toml.NETWORK_PASSPHRASE
-      ? String(toml.NETWORK_PASSPHRASE)
-      : null;
-    if (anchorNetwork && anchorNetwork !== this.networkPassphrase) {
-      throw new Error(
-        `${this.homeDomain} is on "${toml.NETWORK_PASSPHRASE}", not "${this.networkPassphrase}"`,
-      );
-    }
-    // A JWT issued under a rotated SIGNING_KEY is re-negotiated against the new one.
-    if (this.endpoints && this.endpoints.signingKey !== signingKey) {
-      this.jwt = null;
-    }
-    this.endpoints = {
-      transferServer: transferServer.replace(/\/$/, ''),
-      authEndpoint,
-      signingKey,
-      fetchedAt: Date.now(),
+  /** SEP-1 discovery, SEP-10 auth and anchor HTTP live in AnchorSession, shared with SEP-6. */
+  private async getEndpoints(): Promise<{ transferServer: string }> {
+    return { transferServer: await this.session.transferServer('sep24') };
+  }
+
+  private token(): Promise<string> {
+    return this.session.token();
+  }
+
+  private request<T>(url: string, init: AnchorRequestInit = {}): Promise<T> {
+    return this.session.request<T>(url, init);
+  }
+
+  private deps(): WithdrawPaymentDeps {
+    return {
+      session: this.session,
+      horizon: this.horizon,
+      networkPassphrase: this.networkPassphrase,
+      usdc: this.usdc,
+      logger: this.logger,
     };
-    return this.endpoints;
-  }
-
-  /** SEP-10: the challenge is verified (anchor signature, home and web-auth domain, time bounds)
-   * before the platform key signs it. */
-  private async token(): Promise<string> {
-    if (this.jwt && this.jwt.expiresAt > Date.now() + 60_000) {
-      return this.jwt.token;
-    }
-    const { authEndpoint, signingKey } = await this.getEndpoints();
-    const challenge = await this.request<{
-      transaction: string;
-      network_passphrase?: string;
-    }>(
-      `${authEndpoint}?${new URLSearchParams({ account: this.keypair.publicKey(), home_domain: this.homeDomain })}`,
-    );
-    // SEP-10: the challenge may name its network — never sign one meant for another network.
-    if (
-      challenge.network_passphrase &&
-      challenge.network_passphrase !== this.networkPassphrase
-    ) {
-      throw new Error(
-        `${this.homeDomain} SEP-10 challenge is for "${challenge.network_passphrase}", not "${this.networkPassphrase}"`,
-      );
-    }
-    const { tx } = WebAuth.readChallengeTx(
-      challenge.transaction,
-      signingKey,
-      this.networkPassphrase,
-      this.homeDomain,
-      new URL(authEndpoint).hostname,
-    );
-    tx.sign(this.keypair);
-    const { token } = await this.request<{ token: string }>(authEndpoint, {
-      method: 'POST',
-      body: { transaction: tx.toXDR() },
-    });
-    this.jwt = { token, expiresAt: jwtExpiresAt(token) };
-    return token;
-  }
-
-  private async request<T>(
-    url: string,
-    init: {
-      method?: string;
-      token?: string;
-      body?: unknown;
-      form?: { encoding: FormEncoding; fields: Record<string, string> };
-    } = {},
-  ): Promise<T> {
-    const method = init.method ?? 'GET';
-    const headers: Record<string, string> = {};
-    if (init.token) headers.authorization = `Bearer ${init.token}`;
-    let body: string | FormData | URLSearchParams | undefined;
-    if (init.form) {
-      // No content-type header: fetch derives it from the body (with the multipart boundary).
-      if (init.form.encoding === 'multipart') {
-        body = new FormData();
-        for (const [k, v] of Object.entries(init.form.fields))
-          body.append(k, v);
-      } else {
-        body = new URLSearchParams(init.form.fields);
-      }
-    } else if (init.body !== undefined) {
-      headers['content-type'] = 'application/json';
-      body = JSON.stringify(init.body);
-    }
-    const res = await fetch(url, {
-      method,
-      headers,
-      body,
-      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
-    });
-    const text = await res.text();
-    const path = new URL(url).pathname;
-    if (!res.ok) {
-      // The anchor no longer accepts our JWT (revoked or expired early): re-authenticate next call.
-      if (
-        (res.status === 401 || res.status === 403) &&
-        init.token !== undefined &&
-        init.token === this.jwt?.token
-      ) {
-        this.jwt = null;
-      }
-      throw new AnchorHttpError(
-        res.status,
-        text,
-        `${method} ${path} → ${res.status}: ${text.slice(0, 300)}`,
-      );
-    }
-    return JSON.parse(text) as T;
   }
 }

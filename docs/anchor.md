@@ -1,15 +1,24 @@
-# Anchor integration — SEP-24 (`ANCHOR_PROVIDER=sep24`)
+# Anchor integration — SEP-6 and SEP-24
 
-How LiraLink turns a paid link's USDC into fiat through a Stellar anchor. Code:
-`backend/src/anchor/sep24-anchor.adapter.ts` (flow), `backend/src/anchor/sep24.ts` (pure helpers),
-`backend/src/settlements/settlements.service.ts` (driving it). Implemented and verified against
-**testanchor.stellar.org** (SDF's reference anchor, USD out); a real TRY anchor is the same code
-path with a different `ANCHOR_HOME_DOMAIN`.
+How LiraLink turns a paid link's USDC into fiat through a Stellar anchor. There are two real
+adapters behind one interface (`backend/src/anchor/anchor.adapter.ts`), plus `mock`:
 
-`ANCHOR_PROVIDER=mock` stays the default for the demo. API shapes are the same in both modes (only
-`settlementMode` and the balance bucket differ — see *Settlement mode*) —
-a settlement is `pending → processing → completed`, `provider: 'sep24'`, `anchorRef` = the
-anchor's transaction id.
+| `ANCHOR_PROVIDER` | Anchor | Fiat | Shape |
+|---|---|---|---|
+| **`sep6`** | **tr-mock-anchor.fly.dev** — the hackathon's official TRY anchor | **TRY** | programmatic; no human step |
+| `sep24` | testanchor.stellar.org — SDF's reference anchor | USD | interactive; a person completes KYC in a browser |
+| `mock` | none | TRY | instant, in-process; the demo default |
+
+Code: `sep6-anchor.adapter.ts` / `sep24-anchor.adapter.ts` (flows), `sep6.ts` / `sep24.ts` (pure
+helpers), `transfer.ts` (what the two specs share — the transaction object, `/info` limits, status
+vocabulary, memo rules), `anchor-session.ts` (SEP-1 discovery + SEP-10 auth + anchor HTTP, shared
+by both adapters and by the SEP-38 rate source), `withdraw-payment.ts` (the USDC payment and its
+double-spend guard), and `settlements/settlements.service.ts` (driving it).
+
+`ANCHOR_PROVIDER=mock` stays the default for the demo. API shapes are the same in every mode (only
+`settlementMode` and the balance bucket differ — see *Settlement mode*) — a settlement is
+`pending → processing → completed`, `provider` names the adapter, and `anchorRef` is the anchor's
+transaction id. A settlement always continues on the provider it was created with.
 
 ## Config
 
@@ -97,11 +106,123 @@ changes later (`ANCHOR_ADAPTERS` holds both).
 - Statuses seen: `incomplete → pending_user_transfer_start → pending_anchor → pending_external →
   completed`.
 
+## SEP-6 — the TRY rail (`ANCHOR_PROVIDER=sep6`)
+
+The hackathon's anchor speaks **SEP-6**, not SEP-24: the whole withdrawal is programmatic, so
+there is no interactive page, no browser step and no KYC form to fill in. `interactiveUrl` is
+always `null` for a `sep6` settlement.
+
+### Config
+
+```
+ANCHOR_PROVIDER=sep6
+ANCHOR_HOME_DOMAIN=tr-mock-anchor.fly.dev
+FX_PROVIDER=anchor          # strongly recommended — see "Why FX_PROVIDER=anchor matters" below
+```
+
+No KYC or encoding settings: `ANCHOR_SEP24_TEST_KYC_URL` and `ANCHOR_SEP24_ENCODING` are SEP-24
+only. `sep6` refuses to start unless `STELLAR_NETWORK=testnet` — the anchor is a sandbox that
+moves no real money and does not exist on pubnet.
+
+### Flow, step by step
+
+One settlement = one SEP-6 **withdrawal** of `settlement.amountUSDC`.
+
+1. **SEP-1 discovery.** `https://tr-mock-anchor.fly.dev/.well-known/stellar.toml` → `TRANSFER_SERVER`
+   (note: *not* `TRANSFER_SERVER_SEP0024`), `WEB_AUTH_ENDPOINT`, `SIGNING_KEY`,
+   `ANCHOR_QUOTE_SERVER`. Refuses an anchor whose `NETWORK_PASSPHRASE` differs from ours. Read
+   hourly, shared with the SEP-24 adapter and the FX rate source.
+2. **Pre-checks (nothing is opened at the anchor if these fail).** The merchant must have an IBAN,
+   and `GET {TRANSFER_SERVER}/info` must show `withdraw.USDC.enabled` with the amount inside
+   `min_amount`/`max_amount`. Otherwise the settlement stays `pending` with `blockedReason`, and
+   the minute job retries.
+3. **SEP-10 auth.** Identical to SEP-24 — the challenge is verified before the platform key signs
+   it, and the JWT is cached until a minute before `exp`.
+4. **Open the withdrawal.** `GET {TRANSFER_SERVER}/withdraw?asset_code=USDC&type=bank_account&amount=…&account=<platform>&dest=<IBAN>`
+   with the JWT → `{ id, account_id, memo, memo_type }`. Saved as `Settlement.anchorRef`. It is a
+   **GET with query params** — there is no form body, so none of the SEP-24 multipart/urlencoded
+   problem exists here.
+   *If the anchor rejects the amount* (4xx naming a minimum/maximum — see *Observed*), the
+   settlement is `blocked` with `outside_anchor_limits` rather than treated as a transient error:
+   nothing was opened and nothing was sent.
+5. **Send the USDC.** The status is `pending_user_transfer_start` immediately. The adapter checks
+   `amount_in` equals the settlement amount (else `failReason: 'amount_mismatch'`, nothing sent),
+   then pays `withdraw_anchor_account` with **`Memo.id`** (`withdraw_memo_type: "id"` — an `id`
+   memo, *not* text; without the right memo the anchor cannot match the payment). Same
+   double-spend guard as SEP-24: the signed XDR and hash are persisted *before* submitting, a
+   retry resubmits that same transaction, and a new one is built only when the saved one provably
+   never landed.
+6. **Wait for the anchor.** `pending_anchor` / `pending_external` → `processing`; `completed` →
+   settlement `completed`. Terminal failures (`error`, `expired`, `refunded`, `no_market`,
+   `too_small`, `too_large`) → `failed` / `anchor_status`. `incomplete` — which in SEP-24 means
+   "the customer has not filled the form in yet" — has no meaning here and is treated as just
+   another pending anchor state.
+
+### How the money is booked
+
+This anchor charges its spread **in lira, not in USDC**, and reports the lira it actually paid:
+
+```
+amount_in  1.0328445 stellar:USDC:GBBD47IF…   amount_out 50.00 iso4217:TRY
+amount_fee 0.25      iso4217:TRY              fee_details.asset iso4217:TRY
+```
+
+So `netTRY` is taken straight from **`amount_out`** — the money that reached the bank — and
+`feeUSDC` is recorded as `0`, because the 0.25 TRY is *already deducted* from `amount_out` and
+counting it again would net it twice. `feeUSDC` is only ever populated when an anchor denominates
+its fee in our USDC. (Running this through the SEP-24 path would have been wrong: `sep24FeeUSDC`
+returns null for a fee in `iso4217:TRY`, which would have failed the settlement with
+`unexpected_fee_asset` even though the anchor had paid out correctly.)
+
+If a future anchor reports neither a USDC fee nor a TRY `amount_out`, the settlement fails with
+`unexpected_fee_asset` rather than guessing.
+
+### Why `FX_PROVIDER=anchor` matters
+
+With `FX_PROVIDER=mock` a link is priced at 34.00 TRY/USDC while the anchor settles at ~48.4, so
+a 50 TRY link would quote 1.47 USDC and the anchor would hand back ~71 TRY — the merchant's
+lira figure and the anchor's would never agree, and small links would fall under the anchor's
+1 USDC minimum for no reason.
+
+`FX_PROVIDER=anchor` locks the anchor's own rate at link creation:
+`GET {ANCHOR_QUOTE_SERVER}/price?sell_asset=stellar:USDC:…&buy_asset=iso4217:TRY&sell_amount=1&context=sep6`.
+The rate is `1 / total_price` — `total_price` **includes** the anchor's spread, while `price` does
+not, and the spread is what the settlement is really charged. Rounded **down** to 6 dp, so the
+USDC quoted for a link is never short. Cached 5 minutes; the source is logged, and `GET /fx`
+returns `source: 'anchor'`. Any failure (no quote server, non-2xx, unparseable body) logs an
+ERROR and **falls back to the mock rate** — link creation never fails because the anchor is down.
+SEP-38 prices are public here; an anchor that demands the JWT gets it on a 401/403 retry.
+
+This is an *indicative* price, not a firm SEP-38 quote: we do not pass a `quote_id` to the
+withdrawal, so the anchor re-prices at settlement time. Over a link's lifetime the rate can drift
+— see *Known gaps*.
+
+### Observed on tr-mock-anchor (2026-09-16)
+
+- **`/info` cannot be trusted in either direction.** It advertises `min_amount: 0.5` and
+  `max_amount: 300`, but the anchor rejects 0.7 USDC with
+  `400 {"error":"Minimum off-ramp is 1.0000000 USDC"}` and *accepts* 301 USDC. The skill and the
+  docs page both say the minimum is 1 USDC. We enforce the advertised limits **and** map an
+  amount-related 4xx to `outside_anchor_limits`, which is what actually catches the 0.5–1.0 band.
+- Withdraw response: `account_id` `GCLCZEQZ2THTEDAOFI66LACNPLY4OBKN7VKLEZFMBIHYKYQOW2W7T3Z6`
+  (the treasury), `memo_type: "id"`, a 12-digit `memo`, `fee_percent: 0.5`, `eta: 10`.
+  Transaction ids look like `sep_msv6urjp1lprb4ilgsnj`.
+- Statuses seen: `pending_user_transfer_start → pending_anchor → completed` (no `incomplete`).
+- **The TRY goes to a fixed simulated IBAN** (`TR1200099042…`), not the merchant's. `dest` is sent
+  and accepted but ignored — the payout is simulated. Real for the demo's purposes, but nobody's
+  bank account is actually credited.
+- Rate around 48.41 TRY/USDC, quoted as "50 bps under the USD/TRY mid rate" from a Reflector
+  oracle; SEP-38 `total_price` `0.0206568891` ⇒ 48.409999 TRY/USDC.
+- **Live settlement, 2026-09-16:** withdrawal `sep_msv6urjp1lprb4ilgsnj`, 1.0328445 USDC in →
+  50.00 TRY out (0.25 TRY fee), payment
+  [`731af946…`](https://stellar.expert/explorer/testnet/tx/731af946ddcbd054befb9a1d214bcf381db7c83be040629dc1ab361897a1b142)
+  with an id memo, `completed` in well under a minute.
+
 ## Settlement mode (decided 2026-09-12)
 
-`sep24` = **auto-payout per link**: the anchor pays the merchant's IBAN during settlement.
-`GET /me` and `/health` return `settlementMode: 'auto_payout'` (mock: `'balance'`). Completed sep24
-settlements count toward `Balance.paidOutTRY` (by `netTRY`), never `availableTRY`, and
+`sep24` and `sep6` are both **auto-payout per link**: the anchor pays out during settlement.
+`GET /me` and `/health` return `settlementMode: 'auto_payout'` (mock: `'balance'`). Completed
+settlements on either count toward `Balance.paidOutTRY` (by `netTRY`), never `availableTRY`, and
 `POST /withdrawals` returns `409 "Payouts are automatic in this mode"`. The bucket follows the
 provider a settlement was created with, so switching `ANCHOR_PROVIDER` never moves completed money.
 
@@ -135,7 +256,7 @@ v3.4.1, SEP-24 v3.8.0. `[x]` = conforms or fixed in this review, `[ ]` = open de
 - [ ] `pending_user`, `on_hold`, `more_info_url`, `user_action_required_by` are not shown to the merchant → [#22](https://github.com/mersierofis/liralink-demo/issues/22).
 - [ ] `refunds` ignored: partial refunds are not netted, refunded USDC is not credited back → [#24](https://github.com/mersierofis/liralink-demo/issues/24).
 - [ ] KYC re-open: the interactive URL token is short-lived and a stale withdraw is never re-opened → [#10](https://github.com/mersierofis/liralink-demo/issues/10) (`user_action_required_by`, #22, gives the deadline).
-- Not used: SEP-12 (the anchor collects KYC on its own interactive page), SEP-6, SEP-38 quotes, claimable balances (deposit-only).
+- Not used *by this adapter*: SEP-12 (the anchor collects KYC on its own interactive page) and claimable balances (deposit-only). SEP-6 and SEP-38 are now used — by the `sep6` adapter and by `FX_PROVIDER=anchor` respectively; they have not had a line-by-line spec review of their own, and the SEP-6 flow is documented from the spec plus what the anchor actually does (*Observed*).
 
 ## Known gaps / open decisions
 
@@ -155,52 +276,77 @@ v3.4.1, SEP-24 v3.8.0. `[x]` = conforms or fixed in this review, `[ ]` = open de
   anchor expires the transaction. Re-opening a fresh withdraw for a stale one is not built —
   tracked in [#10](https://github.com/mersierofis/liralink-demo/issues/10)
   (`POST /settlements/:id/reopen`).
+- **SEP-6 rates are indicative, not locked.** `FX_PROVIDER=anchor` reads
+  `GET /sep38/price`, not a firm `POST /sep38/quote`, and no `quote_id` is passed to the
+  withdrawal — so the anchor re-prices at settlement time. A link paid hours later settles at the
+  rate of that moment, and `netTRY` can differ from the link's `amountTRY`. Holding a firm quote
+  would mean `withdraw-exchange` plus expiry handling (quotes live ~15 min, links up to 24 h),
+  which is not built.
+- **The SEP-6 payout is simulated.** tr-mock-anchor credits a fixed test IBAN, not the merchant's
+  — `dest` is sent and ignored. `paidOutTRY` therefore means "the anchor says it paid", which on
+  this sandbox is not a real bank credit. A licensed anchor would honour `dest`.
+- **`netTRY` can exceed `amountTRY`.** When the anchor's rate moves in the merchant's favour
+  between link creation and settlement, `amount_out` is larger than the link's face value and is
+  booked as-is (it is the money that moved). Nothing caps it.
 - Single-process guard only — running two backend instances against one DB would need a DB lock
   around the payment step.
 
-## Saturday checklist — switching the live service to a real anchor (2026-09-19)
+## Saturday checklist — switching the live service to a real anchor
 
-Run it in order and stop at the first step that fails. Live stays `ANCHOR_PROVIDER=mock` until
-step 6. Edit the live `backend/.env` with comments on their own lines only (systemd doesn't strip
-inline `#`), and restart `liralink-api` after every `.env` change.
+**Steps 1–5 are already done** (2026-09-16). The official TRY anchor went live at
+`tr-mock-anchor.fly.dev`, the SEP-6 adapter is built against it, and the whole flow is verified
+end to end with real testnet USDC — see *Observed on tr-mock-anchor*. Nothing is left to discover:
 
-1. **Home domain.** Settle on the anchor's home domain (`ANCHOR_HOME_DOMAIN`, no scheme or path)
-   and make sure it serves our USDC (`USDC_CODE` / `USDC_ISSUER`) for SEP-24 withdraw.
-2. **stellar.toml.** `curl -s https://<domain>/.well-known/stellar.toml` must contain
-   `TRANSFER_SERVER_SEP0024`, `WEB_AUTH_ENDPOINT` and `SIGNING_KEY`, and `NETWORK_PASSPHRASE` (if
-   present) must equal ours. The adapter refuses the anchor otherwise.
-3. **`/info` limits.** `curl -s <TRANSFER_SERVER_SEP0024>/info` → `withdraw.USDC.enabled: true`.
-   Note `min_amount` / `max_amount`: the step 7 link must fall inside them, or the settlement stays
-   `pending` with `blockedReason: 'outside_anchor_limits'`.
-4. **Encoding probe.** Authenticate with SEP-10 as the platform account, then send one
-   `POST /transactions/withdraw/interactive` in each format (`multipart/form-data`, then
-   `application/x-www-form-urlencoded`) with the flow's step 4 fields. Set `ANCHOR_SEP24_ENCODING`
-   to the format that returns `200 { id, url }`, preferring `multipart` if both do. Each accepted
-   probe leaves an `incomplete` withdraw at the anchor. No funds move, and the anchor expires it.
-   Record the status and body of any rejected format under *Observed*.
-5. **KYC automation off.** `ANCHOR_SEP24_TEST_KYC_URL=` (empty). Only testanchor's reference server
-   works with the automated form. With a real anchor, the merchant completes `interactiveUrl` in a
-   browser. Its token is short-lived (15 min on testanchor), so open it right away.
-6. **`ANCHOR_PROVIDER=sep24`.** Before switching, `npm run demo:check` must say READY and the
-   platform account must hold at least the step 7 amount in USDC. Set
-   `ANCHOR_PROVIDER=sep24`, `ANCHOR_HOME_DOMAIN`, `ANCHOR_SEP24_ENCODING` and the empty KYC URL,
-   restart, and check that `/health` reports `settlementMode: auto_payout`. Settlements that already
-   exist keep their provider (the completed mock ones are never re-settled). Only new ones use sep24.
-7. **One small end-to-end link.** Use a merchant with an IBAN and one link inside the step 3 limits
-   (as small as the minimum allows). Pay it, complete `interactiveUrl`, and follow `GET /settlements`
-   to `completed`. Record `anchorRef`, the USDC payment tx hash (check it on Horizon: memo set,
-   destination = `withdraw_anchor_account`), `feeUSDC` and `netTRY`. If the result is `failed` or
-   `amount_mismatch`, or the payment sits in `processing` past the anchor's own deadline, go to step 8.
-8. **Rollback to mock.** Set `ANCHOR_PROVIDER=mock` and restart. `/health` should report
-   `settlementMode: balance`. **Keep `ANCHOR_HOME_DOMAIN` set** until every sep24 settlement is
-   `completed` or `failed`. They resume on the provider they were created with, and the sep24
-   adapter can't reach the anchor without it. Nothing is re-settled on mock. Leave any USDC already
-   sent to the anchor for manual reconciliation using `anchorRef` and the tx hash.
+1. ~~**Home domain.**~~ `tr-mock-anchor.fly.dev`. It serves **our** USDC issuer
+   (`GBBD47IF…`), so no asset change is needed.
+2. ~~**stellar.toml.**~~ Verified: `TRANSFER_SERVER` `…/sep6`, `WEB_AUTH_ENDPOINT` `…/auth`,
+   `ANCHOR_QUOTE_SERVER` `…/sep38`, `SIGNING_KEY` `GDXYO6FJ…`, `NETWORK_PASSPHRASE` = ours.
+   It has **no** `TRANSFER_SERVER_SEP0024` — this anchor does not do SEP-24, which is why the
+   SEP-6 adapter exists.
+3. ~~**`/info` limits.**~~ `withdraw.USDC.enabled: true`, advertised 0.5–300, really 1–unbounded.
+   Both are handled; see *Observed*.
+4. ~~**Encoding probe.**~~ Not applicable — SEP-6 opens a withdrawal with a GET, so there is no
+   request body and no multipart/urlencoded question.
+5. ~~**KYC automation off.**~~ Not applicable — SEP-6 has no interactive step at all, and this
+   anchor auto-approves SEP-12 KYC. Leave `ANCHOR_SEP24_TEST_KYC_URL` empty.
+
+What remains is the decision to flip, which is deliberately **not** automatic:
+
+6. **`ANCHOR_PROVIDER=sep6`.** Before switching, `npm run demo:check` must say READY and the
+   platform account must hold enough USDC for the links you plan to demo. Edit the live
+   `backend/.env` (comments on their own lines only — systemd doesn't strip inline `#`):
+   `ANCHOR_PROVIDER=sep6`, `ANCHOR_HOME_DOMAIN=tr-mock-anchor.fly.dev`, and
+   **`FX_PROVIDER=anchor`** — without it, links stay priced at 34.00 while the anchor settles at
+   ~48.4 (see *Why `FX_PROVIDER=anchor` matters*). Restart `liralink-api` and check `/health`
+   reports `settlementMode: auto_payout` and `GET /fx` reports `source: "anchor"`. Settlements that
+   already exist keep their provider — the completed mock ones are never re-settled.
+7. **One small end-to-end link.** A merchant with an IBAN and one link worth **at least 1 USDC**
+   (≈ 50 TRY at the anchor rate — under that the settlement blocks with `outside_anchor_limits`).
+   Pay it and follow `GET /settlements` to `completed`; there is no browser step to complete.
+   Record `anchorRef`, the payment tx hash (on Horizon: `memo_type: id`, destination
+   `GCLCZEQZ…`), and `netTRY`. Expect `feeUSDC` `0` and `netTRY` ≈ the link's TRY.
+8. **Rollback to mock.** Set `ANCHOR_PROVIDER=mock` (and `FX_PROVIDER=mock`) and restart;
+   `/health` should report `settlementMode: balance`. **Keep `ANCHOR_HOME_DOMAIN` set** until every
+   `sep6` settlement is `completed` or `failed` — they resume on the provider they were created
+   with, and the adapter can't reach the anchor without it. Nothing is re-settled on mock. Leave
+   any USDC already sent for manual reconciliation using `anchorRef` and the tx hash.
+
+The demo currently runs `mock`. Flipping it live is the operator's call.
 
 ## Testing
 
 - Unit: `src/anchor/sep24.spec.ts` (status mapping, limits, memo types, fee parsing, JWT expiry),
+  `src/anchor/sep6.spec.ts` (SEP-6 status mapping, the `amount_out`/fee booking rules, `Memo.id`),
+  `src/anchor/sep6-anchor.adapter.spec.ts` (against a fake anchor: the withdraw query params, all
+  four block reasons including the anchor's own 4xx, and that no `interactiveUrl` is ever
+  persisted), `src/anchor/anchor-session.spec.ts` (SEP-1 / SEP-10 conformance, shared by both
+  adapters), `src/fx/fx.service.spec.ts` (`anchorRateTRYperUSDC`),
   `src/settlements/settlement-math.spec.ts` (`netSettlementTRY`).
+- Live e2e, **SEP-6** (spends ~1 real testnet USDC per run, needs network):
+  `SEP6_E2E=1 npm run test:e2e -- sep6` — `GET /fx` reporting `source: anchor`, `settlementMode`,
+  `missing_iban`, a block in the 0.5–1.0 USDC band where `/info` and the anchor disagree, then a
+  full settlement to `completed` checked on Horizon (`memo_type: id`) with `netTRY` in
+  `paidOutTRY`. Skipped unless `SEP6_E2E=1`. Passed 2026-09-16 (5/5).
 - Live e2e (spends 1 real testnet USDC per run, needs network):
   `SEP24_E2E=1 npm run test:e2e -- sep24` — `missing_iban` and `outside_anchor_limits` blocks, then
   a full 1 USDC settlement to `completed`, checked on Horizon, with `feeUSDC` 0.1 and `netTRY` 30.60
