@@ -48,3 +48,10 @@ export function describeUnsettledPayment(payment: PaymentListItem): UnsettledPay
     detail: `This link ${link.status} before it was fully paid, so this payment was never settled.`,
   }
 }
+
+/** Payments whose settlement is waiting on the merchant to complete a real anchor's KYC/bank-
+ * details form (04-BACKEND-HANDOFF.md §2 + §5) — used to drive the dashboard banner and to decide
+ * whether to keep polling. `interactiveUrl` is only ever non-null while `status === 'processing'`. */
+export function findAwaitingVerification(payments: PaymentListItem[]): PaymentListItem[] {
+  return payments.filter((p) => p.settlement?.interactiveUrl)
+}
