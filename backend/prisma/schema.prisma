@@ -52,6 +52,13 @@ model Merchant {
   unallocatedUSDC Decimal  @default(0) @db.Decimal(20, 7)
   createdAt       DateTime @default(now())
 
+  // SEP-12 registration at a SEP-6 anchor (sep6): the anchor's customer id for this merchant's
+  // SEP-10 identity, and the IBAN + home domain it was registered with. The adapter re-registers
+  // whenever either differs, so a changed IBAN reaches the anchor before the next payout.
+  sep12CustomerId String?
+  sep12Iban       String?
+  sep12HomeDomain String?
+
   links           PaymentLink[]
   settlements     Settlement[]
   withdrawals     Withdrawal[]
@@ -150,6 +157,10 @@ model Settlement {
   // resubmits the same transaction instead of sending the USDC twice.
   anchorTxHash   String?
   anchorTxXdr    String?
+  // The SEP-10 memo the anchor transaction was opened under (sep6: one anchor user per merchant).
+  // Anchors scope transactions to the JWT `sub`, so it is polled with the same identity. Null =
+  // the bare platform account (sep24, and sep6 withdrawals opened before per-merchant identity).
+  anchorMemo     String?
 }
 
 model Withdrawal {

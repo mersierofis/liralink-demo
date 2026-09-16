@@ -27,6 +27,14 @@ Live: [merchant panel](https://merchant-web.tutorialplatform.com) ·
    ```
    Want `READY`. Exit 1 prints `NOT READY` and one line per problem. Thresholds: payer ≥ 5 USDC,
    platform ≥ 1 USDC. Also confirm the row reads `anchor  mock (balance)`.
+   It also checks the TRY anchor's `GET /health` (`--anchor`, default `tr-mock-anchor.fly.dev`):
+   `anchor health` (fails the check if unreachable), `anchor rate` (want `source reflector`;
+   `static_fallback` means the oracle is down and the rate is stale) and `anchor treasury` (USDC).
+   **The anchor is a shared sandbox the organisers may reset before the event.** A reset needs
+   nothing from us — merchants' SEP-12 IBAN registrations are re-checked before every withdraw and
+   re-sent if the anchor forgot them — but re-run `demo:check` that morning. If *only*
+   `anchor health` fails while live still runs `mock`, the stage demo is unaffected (no anchor is
+   involved); it only blocks switching to `sep6`.
 3. **`npm run demo:reset`** — read the dry run, then apply:
    ```
    npm run demo:reset           # dry run: prints what would change, writes nothing
@@ -66,7 +74,7 @@ Have a second link created and unpaid before you start, so step 4 needs no typin
 | Symptom | Do this |
 |---|---|
 | **API down** (health fails, panel errors) | `sudo systemctl restart liralink-api` (~10 s), watch `journalctl -u liralink-api -f`; if it doesn't come back in a minute, stop debugging and show the three recorded rail txs from the root README instead. |
-| **Anchor down / settlement stuck** | Nothing to do: live runs the **mock** anchor, so TRY is credited locally and no anchor is involved. If someone switched to `sep24`, roll back — `anchor.md` → *Saturday checklist* step 8 (`ANCHOR_PROVIDER=mock`, restart, keep `ANCHOR_HOME_DOMAIN` set). |
+| **Anchor down / settlement stuck** | Nothing to do: live runs the **mock** anchor, so TRY is credited locally and no anchor is involved. If someone switched to `sep6` or `sep24`, roll back — `anchor.md` → *Saturday checklist* step 8 (`ANCHOR_PROVIDER=mock`, restart, keep `ANCHOR_HOME_DOMAIN` set). `curl -s https://tr-mock-anchor.fly.dev/health` tells a down/reset sandbox from our side. |
 | **Wallet fails** (Freighter won't connect, sign, or no funds) | Skip the phone: Hasan pays the same link with `agent:pay` from the laptop (step 4) — same rail proof, no wallet. Last resort: open an already-paid receipt, `/p/VHHCJ8QZ`. |
 | Payment sent but link stays `open` | Check `listener` in `/health`; wrong/missing memo won't match — it lands in `GET /unallocated`. Don't re-pay on stage. |
 | Box is swapping / sluggish | Confirm step 1 stopped both units; `free -m` should show ≥ 1 GB available. `liralink-api` runs with `OOMScoreAdjust=-900`, so the kernel kills other projects first. |

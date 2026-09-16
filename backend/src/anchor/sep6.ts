@@ -6,6 +6,30 @@ import {
   transferPhase,
 } from './transfer';
 
+/**
+ * The SEP-10 memo that makes a merchant its own user at the anchor (`sub` = `G…:memo`) on the
+ * shared platform account — issue #21.
+ *
+ * Merchants have no numeric id, and adding one would backfill every live row (migrations stay
+ * nullable-only), so it is derived from the UUID: the first 63 bits, which keeps it a valid
+ * uint64 id memo. Deterministic — the same merchant is always the same anchor user, with nothing
+ * to store or race on. Two merchants collide with probability ~n²/2⁶⁴.
+ */
+export function anchorMemoFor(merchantId: string): string {
+  const hex = merchantId.replace(/-/g, '');
+  if (!/^[0-9a-f]{32}$/i.test(hex)) {
+    throw new Error(`merchant id "${merchantId}" is not a UUID`);
+  }
+  const id = BigInt(`0x${hex.slice(0, 16)}`) & ((1n << 63n) - 1n);
+  return (id === 0n ? 1n : id).toString();
+}
+
+/** `GET {KYC_SERVER}/customer` (SEP-12), the parts we read. */
+export interface Sep12Customer {
+  id?: string;
+  status?: string;
+}
+
 /** `GET {TRANSFER_SERVER}/withdraw` (SEP-6), the parts we read. */
 export interface Sep6WithdrawResponse {
   id: string;

@@ -129,34 +129,57 @@ moves no real money and does not exist on pubnet.
 One settlement = one SEP-6 **withdrawal** of `settlement.amountUSDC`.
 
 1. **SEP-1 discovery.** `https://tr-mock-anchor.fly.dev/.well-known/stellar.toml` → `TRANSFER_SERVER`
-   (note: *not* `TRANSFER_SERVER_SEP0024`), `WEB_AUTH_ENDPOINT`, `SIGNING_KEY`,
+   (note: *not* `TRANSFER_SERVER_SEP0024`), `WEB_AUTH_ENDPOINT`, `SIGNING_KEY`, `KYC_SERVER`,
    `ANCHOR_QUOTE_SERVER`. Refuses an anchor whose `NETWORK_PASSPHRASE` differs from ours. Read
    hourly, shared with the SEP-24 adapter and the FX rate source.
 2. **Pre-checks (nothing is opened at the anchor if these fail).** The merchant must have an IBAN,
    and `GET {TRANSFER_SERVER}/info` must show `withdraw.USDC.enabled` with the amount inside
    `min_amount`/`max_amount`. Otherwise the settlement stays `pending` with `blockedReason`, and
    the minute job retries.
-3. **SEP-10 auth.** Identical to SEP-24 — the challenge is verified before the platform key signs
-   it, and the JWT is cached until a minute before `exp`.
-4. **Open the withdrawal.** `GET {TRANSFER_SERVER}/withdraw?asset_code=USDC&type=bank_account&amount=…&account=<platform>&dest=<IBAN>`
-   with the JWT → `{ id, account_id, memo, memo_type }`. Saved as `Settlement.anchorRef`. It is a
-   **GET with query params** — there is no form body, so none of the SEP-24 multipart/urlencoded
-   problem exists here.
+3. **SEP-10 auth — as the merchant's own anchor user** ([#21](https://github.com/mersierofis/liralink-demo/issues/21)).
+   Every merchant's USDC sits in one platform account, so the adapter logs in with SEP-10 *Memos*:
+   `GET {WEB_AUTH_ENDPOINT}?account=<platform>&memo=<merchant memo>&home_domain=…`. The anchor
+   then sees one user per merchant (JWT `sub` = `G…:<memo>`), with its own KYC record, IBAN and
+   transaction history. The memo is a 63-bit number derived from the merchant's UUID
+   (`anchorMemoFor`) — merchants have no numeric id, and adding one would backfill live rows. The
+   challenge must carry the memo asked for, and the issued JWT's `sub` must be exactly
+   `G…:<memo>`; otherwise nothing is signed or cached (an anchor that ignored the memo would
+   otherwise merge every merchant into one user without an error). One JWT is cached per merchant.
+4. **SEP-12: register the payout IBAN.** Without it this anchor pays a default sandbox account,
+   not the merchant. On the merchant's first withdraw — and whenever `merchant.iban` or the anchor
+   home domain differs from what was registered — `PUT {KYC_SERVER}/customer
+   { "bank_account_number": <IBAN> }` with the merchant's JWT → `{ id }`, stored as
+   `Merchant.sep12CustomerId` with `sep12Iban` and `sep12HomeDomain`. When all three already match,
+   one `GET {KYC_SERVER}/customer` confirms the anchor still has that customer `ACCEPTED`. If the
+   sandbox was reset (status back to `NEEDS_INFO`, or another id), it registers again instead of
+   letting the payout fall back to the default account. A `400` (the anchor validates a Turkish
+   mod-97 IBAN) blocks the settlement with `missing_iban` — nothing is opened.
+5. **Open the withdrawal.** `GET {TRANSFER_SERVER}/withdraw?asset_code=USDC&funding_method=bank_account&amount=…&account=<platform>&dest=<IBAN>`
+   with the merchant's JWT → `{ id, account_id, memo, memo_type }`. Saved as `Settlement.anchorRef`
+   **together with `Settlement.anchorMemo`**: the anchor scopes transactions to the JWT `sub`, so
+   it is only visible to that merchant's identity. (`funding_method` replaces the deprecated `type`.)
+   It is a **GET with query params** — there is no form body, so the SEP-24 multipart/urlencoded
+   problem doesn't come up.
    *If the anchor rejects the amount* (4xx naming a minimum/maximum — see *Observed*), the
    settlement is `blocked` with `outside_anchor_limits` rather than treated as a transient error:
    nothing was opened and nothing was sent.
-5. **Send the USDC.** The status is `pending_user_transfer_start` immediately. The adapter checks
+6. **Send the USDC.** The status is `pending_user_transfer_start` immediately. The adapter checks
    `amount_in` equals the settlement amount (else `failReason: 'amount_mismatch'`, nothing sent),
    then pays `withdraw_anchor_account` with **`Memo.id`** (`withdraw_memo_type: "id"` — an `id`
    memo, *not* text; without the right memo the anchor cannot match the payment). Same
    double-spend guard as SEP-24: the signed XDR and hash are persisted *before* submitting, a
    retry resubmits that same transaction, and a new one is built only when the saved one provably
    never landed.
-6. **Wait for the anchor.** `pending_anchor` / `pending_external` → `processing`; `completed` →
-   settlement `completed`. Terminal failures (`error`, `expired`, `refunded`, `no_market`,
-   `too_small`, `too_large`) → `failed` / `anchor_status`. `incomplete` — which in SEP-24 means
-   "the customer has not filled the form in yet" — has no meaning here and is treated as just
-   another pending anchor state.
+7. **Wait for the anchor.** `GET {TRANSFER_SERVER}/transaction?id=` as the identity in
+   `anchorMemo` (a withdrawal opened before per-merchant identity has `anchorMemo` null and is
+   polled as the bare platform account). `pending_anchor` / `pending_external` → `processing`;
+   `completed` → settlement `completed`. The completed transaction names where the lira went
+   (`to`) and its bank reference (`external_transaction_id`); if `to` is not the merchant's IBAN
+   the settlement still completes — the money already moved — but an ERROR is logged for manual
+   reconciliation. Terminal failures (`error`, `expired`, `refunded`, `no_market`, `too_small`,
+   `too_large`) → `failed` / `anchor_status`. `incomplete` — which in SEP-24 means "the customer
+   has not filled the form in yet" — has no meaning here and is treated as just another pending
+   anchor state.
 
 ### How the money is booked
 
@@ -208,15 +231,42 @@ withdrawal, so the anchor re-prices at settlement time. Over a link's lifetime t
   (the treasury), `memo_type: "id"`, a 12-digit `memo`, `fee_percent: 0.5`, `eta: 10`.
   Transaction ids look like `sep_msv6urjp1lprb4ilgsnj`.
 - Statuses seen: `pending_user_transfer_start → pending_anchor → completed` (no `incomplete`).
-- **The TRY goes to a fixed simulated IBAN** (`TR1200099042…`), not the merchant's. `dest` is sent
-  and accepted but ignored — the payout is simulated. Real for the demo's purposes, but nobody's
-  bank account is actually credited.
-- Rate around 48.41 TRY/USDC, quoted as "50 bps under the USD/TRY mid rate" from a Reflector
-  oracle; SEP-38 `total_price` `0.0206568891` ⇒ 48.409999 TRY/USDC.
-- **Live settlement, 2026-09-16:** withdrawal `sep_msv6urjp1lprb4ilgsnj`, 1.0328445 USDC in →
-  50.00 TRY out (0.25 TRY fee), payment
-  [`731af946…`](https://stellar.expert/explorer/testnet/tx/731af946ddcbd054befb9a1d214bcf381db7c83be040629dc1ab361897a1b142)
-  with an id memo, `completed` in well under a minute.
+- **The payout IBAN comes from SEP-12, not from `dest`.** Without a registered customer the lira
+  goes to a deterministic sandbox IBAN (`TR1200099042…` for the bare platform account). `dest` is
+  accepted and ignored. After `PUT /sep12/customer { bank_account_number }` it goes to the
+  merchant's IBAN. The payout itself is simulated (no bank is credited), but the routing is real.
+- **Transactions are scoped to the SEP-10 `sub`.** A withdrawal opened as `G…:<memo A>` is a `404`
+  for `G…:<memo B>` *and* for the bare `G…`. Memo logins work on an account that has already
+  logged in without one.
+- Rate ≈ 48.41 TRY/USDC: Reflector's USD/TRY oracle on Stellar mainnet (cached 60 s) minus a
+  50 bps spread. SEP-38 `total_price` `0.0206568891` ⇒ 48.409999. `GET /health` reports the source
+  (`reflector`, or `static_fallback` if the oracle is unreachable), mid/buy/sell rates and the
+  treasury balance.
+- **Live settlement, 2026-09-16 (omnibus identity):** withdrawal `sep_msv6urjp1lprb4ilgsnj`,
+  1.0328445 USDC in → 50.00 TRY out (0.25 TRY fee) to the sandbox default IBAN, payment
+  [`731af946…`](https://stellar.expert/explorer/testnet/tx/731af946ddcbd054befb9a1d214bcf381db7c83be040629dc1ab361897a1b142).
+- **Live settlement, 2026-09-16 (per-merchant identity):** withdrawal `sep_ojw0zf7k31vq3v0vr283`
+  as anchor user `2502363679949800526`, 50.00 TRY paid to **the merchant's IBAN**
+  `TR330006100519786457841326`, bank reference `FAST-VNFC6IMHRA`, payment
+  [`440149f4…`](https://stellar.expert/explorer/testnet/tx/440149f4ac9cf07de9de10cb25f32c3fd5e4b766ed149f6a789715aac6e6269d).
+  The bare platform login got `404` for it.
+
+### Observed vs documented
+
+What tr-mock-anchor actually does, against what its own docs say
+([`skills/anchor-tr`](../skills/anchor-tr/SOURCE.md), the hackathon SEP-6 page, `/guide`, and the
+SEP specs). The adapter follows the observed behaviour.
+
+| Topic | Documented | Observed (2026-09-16) | What LiraLink does |
+|---|---|---|---|
+| **Fee asset** | SEP-38: fee "in the sell asset" (USDC); `/info` `fee_percent: 0.5`; the guide says `amount_fee` is "the spread, in TRY" | Withdrawal books `amount_fee 0.25 iso4217:TRY`; `amount_out` is already net | `netTRY` = `amount_out`; `feeUSDC` = 0. The SEP-24 fee path would have failed the settlement |
+| **Withdraw minimum** | Skill, SEP-6 page, guide: 1 USDC | `/info` advertises `min_amount: 0.5`; the anchor rejects 0.7 with `400 Minimum off-ramp is 1.0000000 USDC` | Enforce `/info`, **and** map an amount 4xx to `outside_anchor_limits` |
+| **Withdraw maximum** | `/info`: `max_amount: 300` | 301 USDC accepted | Enforce the advertised 300 anyway |
+| **Payout IBAN** | SEP-6: `dest` is where the fiat goes | `dest` ignored; the IBAN registered over SEP-12 is used, else a sandbox default | Register the IBAN over SEP-12 per merchant; check `to` on completion |
+| **User identity** | Skill examples: bare `GET /auth?account=G…` | Memos supported (`sub` `G…:memo`); transactions scoped per `sub` | One anchor user per merchant; `anchorMemo` stored per settlement |
+| **`type` param** | Skill / SEP-6 page: `type=bank_account` | Deprecated; `funding_method=bank_account` accepted (and `type` still is) | `funding_method` |
+| **Rate source** | Skill: "Reflector oracle + 50 bps spread" | Confirmed in `/health`: `source: reflector`, `spread_bps: 50` | SEP-38 `/price` → `1 / total_price`; `demo:check` prints the source |
+| **Persistence** | Guide FAQ: "assume it can be reset before events" | — | SEP-12 registration is re-checked with a GET before every withdraw; `demo:check` fails if `/health` is unreachable |
 
 ## Settlement mode (decided 2026-09-12)
 
@@ -243,7 +293,7 @@ v3.4.1, SEP-24 v3.8.0. `[x]` = conforms or fixed in this review, `[ ]` = open de
 - [x] **Fixed:** the challenge's optional `network_passphrase` was not compared → refuses to sign for another network.
 - [x] **Fixed:** a JWT the anchor rejects (401/403) stayed cached until `exp` → cleared; the next run re-authenticates.
 - [x] No `client_domain`: custodial — anchors identify custodial clients by the JWT `sub`.
-- [ ] The omnibus platform account authenticates without a memo / `M…` `sub`, so every merchant is one anchor user (one KYC identity). **Before a real anchor** → [#21](https://github.com/mersierofis/liralink-demo/issues/21).
+- [ ] The omnibus platform account authenticates without a memo / `M…` `sub`, so every merchant is one anchor user (one KYC identity). **Before a real anchor** → [#21](https://github.com/mersierofis/liralink-demo/issues/21). **Closed for SEP-6** (2026-09-16): `sep6` logs in per merchant with a memo, `sub` = `G…:<memo>` verified; see *SEP-6 → Flow* step 3. Still open for `sep24`, which keeps the bare account — switching it needs the per-anchor check that testanchor accepts memo logins on an account already used without one.
 
 **SEP-24 (interactive withdraw)**
 - [x] `/info` read unauthenticated; `enabled` / `min_amount` / `max_amount` → `blockedReason` before anything is opened.
@@ -282,9 +332,15 @@ v3.4.1, SEP-24 v3.8.0. `[x]` = conforms or fixed in this review, `[ ]` = open de
   rate of that moment, and `netTRY` can differ from the link's `amountTRY`. Holding a firm quote
   would mean `withdraw-exchange` plus expiry handling (quotes live ~15 min, links up to 24 h),
   which is not built.
-- **The SEP-6 payout is simulated.** tr-mock-anchor credits a fixed test IBAN, not the merchant's
-  — `dest` is sent and ignored. `paidOutTRY` therefore means "the anchor says it paid", which on
-  this sandbox is not a real bank credit. A licensed anchor would honour `dest`.
+- **The SEP-6 payout is simulated.** tr-mock-anchor routes the lira to the merchant's registered
+  IBAN, but no bank is credited — `paidOutTRY` means "the anchor says it paid". A wrong `to` on a
+  completed withdrawal is logged at ERROR, not failed (the money already moved).
+- **Derived merchant memo.** `anchorMemoFor` uses the UUID's first 63 bits: two merchants share an
+  anchor identity with probability ~n²/2⁶⁴, and the derivation must never change — a new formula
+  would make every merchant a stranger to the anchor (their open withdrawals stay reachable
+  through `Settlement.anchorMemo`, but SEP-12 would re-register).
+- **An anchor without `KYC_SERVER`** can't be told the payout IBAN; the `sep6` settlement throws
+  and is retried every minute rather than paying an unknown account.
 - **`netTRY` can exceed `amountTRY`.** When the anchor's rate moves in the merchant's favour
   between link creation and settlement, `amount_out` is larger than the link's face value and is
   booked as-is (it is the money that moved). Nothing caps it.
@@ -312,8 +368,11 @@ end to end with real testnet USDC — see *Observed on tr-mock-anchor*. Nothing 
 
 What remains is the decision to flip, which is deliberately **not** automatic:
 
-6. **`ANCHOR_PROVIDER=sep6`.** Before switching, `npm run demo:check` must say READY and the
-   platform account must hold enough USDC for the links you plan to demo. Edit the live
+6. **`ANCHOR_PROVIDER=sep6`.** Before switching, `npm run demo:check` must say READY — it now
+   also fails if the anchor's `/health` is unreachable and prints its rate source and treasury
+   balance — and the platform account must hold enough USDC for the links you plan to demo. The
+   sandbox may have been reset by the organisers: nothing to redo on our side (SEP-12
+   registrations are re-checked before every withdraw), but confirm the treasury is funded. Edit the live
    `backend/.env` (comments on their own lines only — systemd doesn't strip inline `#`):
    `ANCHOR_PROVIDER=sep6`, `ANCHOR_HOME_DOMAIN=tr-mock-anchor.fly.dev`, and
    **`FX_PROVIDER=anchor`** — without it, links stay priced at 34.00 while the anchor settles at
@@ -324,7 +383,9 @@ What remains is the decision to flip, which is deliberately **not** automatic:
    (≈ 50 TRY at the anchor rate — under that the settlement blocks with `outside_anchor_limits`).
    Pay it and follow `GET /settlements` to `completed`; there is no browser step to complete.
    Record `anchorRef`, the payment tx hash (on Horizon: `memo_type: id`, destination
-   `GCLCZEQZ…`), and `netTRY`. Expect `feeUSDC` `0` and `netTRY` ≈ the link's TRY.
+   `GCLCZEQZ…`), and `netTRY`. Expect `feeUSDC` `0` and `netTRY` ≈ the link's TRY. The API log line
+   `anchor paid TR… (bank ref FAST-…)` must name **the merchant's IBAN** — an ERROR saying
+   `not merchant …'s IBAN` means the SEP-12 registration didn't take.
 8. **Rollback to mock.** Set `ANCHOR_PROVIDER=mock` (and `FX_PROVIDER=mock`) and restart;
    `/health` should report `settlementMode: balance`. **Keep `ANCHOR_HOME_DOMAIN` set** until every
    `sep6` settlement is `completed` or `failed` — they resume on the provider they were created
@@ -336,17 +397,23 @@ The demo currently runs `mock`. Flipping it live is the operator's call.
 ## Testing
 
 - Unit: `src/anchor/sep24.spec.ts` (status mapping, limits, memo types, fee parsing, JWT expiry),
-  `src/anchor/sep6.spec.ts` (SEP-6 status mapping, the `amount_out`/fee booking rules, `Memo.id`),
-  `src/anchor/sep6-anchor.adapter.spec.ts` (against a fake anchor: the withdraw query params, all
-  four block reasons including the anchor's own 4xx, and that no `interactiveUrl` is ever
-  persisted), `src/anchor/anchor-session.spec.ts` (SEP-1 / SEP-10 conformance, shared by both
-  adapters), `src/fx/fx.service.spec.ts` (`anchorRateTRYperUSDC`),
+  `src/anchor/sep6.spec.ts` (SEP-6 status mapping, the `amount_out`/fee booking rules, `Memo.id`,
+  `anchorMemoFor`), `src/anchor/sep6-anchor.adapter.spec.ts` (against a fake anchor: SEP-12
+  register / re-register on IBAN or domain change / re-register after a sandbox reset / IBAN
+  rejected, `funding_method` and no `type`, the merchant JWT on every call, `anchorMemo` persisted
+  and used for polling, all block reasons including the anchor's own 4xx, the wrong-payout-IBAN
+  ERROR, and that no `interactiveUrl` is ever persisted), `src/anchor/anchor-session.spec.ts`
+  (SEP-1 / SEP-10 conformance shared by both adapters, and per-memo identity against real signed
+  challenges: memo in the challenge URL, one cached JWT per memo, refusal of a `sub` or challenge
+  that drops the memo), `src/fx/fx.service.spec.ts` (`anchorRateTRYperUSDC`),
   `src/settlements/settlement-math.spec.ts` (`netSettlementTRY`).
 - Live e2e, **SEP-6** (spends ~1 real testnet USDC per run, needs network):
   `SEP6_E2E=1 npm run test:e2e -- sep6` — `GET /fx` reporting `source: anchor`, `settlementMode`,
   `missing_iban`, a block in the 0.5–1.0 USDC band where `/info` and the anchor disagree, then a
   full settlement to `completed` checked on Horizon (`memo_type: id`) with `netTRY` in
-  `paidOutTRY`. Skipped unless `SEP6_E2E=1`. Passed 2026-09-16 (5/5).
+  `paidOutTRY`; then, at the anchor, that the withdrawal belongs to the merchant's memo identity
+  (`404` for the bare platform login), the SEP-12 customer is stored, and the payout `to` is the
+  merchant's IBAN with a bank reference. Skipped unless `SEP6_E2E=1`. Passed 2026-09-16 (5/5).
 - Live e2e (spends 1 real testnet USDC per run, needs network):
   `SEP24_E2E=1 npm run test:e2e -- sep24` — `missing_iban` and `outside_anchor_limits` blocks, then
   a full 1 USDC settlement to `completed`, checked on Horizon, with `feeUSDC` 0.1 and `netTRY` 30.60

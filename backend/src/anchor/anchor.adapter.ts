@@ -31,6 +31,8 @@ export interface SettlementAnchorState {
   anchorStatus: string | null;
   anchorTxHash: string | null;
   anchorTxXdr: string | null;
+  /** SEP-10 memo the anchor transaction was opened under; null/absent = the bare platform account. */
+  anchorMemo?: string | null;
 }
 
 export type AnchorSettlementPatch = Partial<
@@ -41,7 +43,13 @@ export type AnchorSettlementPatch = Partial<
     | 'anchorStatus'
     | 'anchorTxHash'
     | 'anchorTxXdr'
+    | 'anchorMemo'
   >
+>;
+
+/** What an adapter may record about the merchant at the anchor (SEP-12 registration). */
+export type AnchorMerchantPatch = Partial<
+  Pick<Merchant, 'sep12CustomerId' | 'sep12Iban' | 'sep12HomeDomain'>
 >;
 
 export type SettleResult =
@@ -82,6 +90,8 @@ export interface AnchorAdapter {
     settlement: SettlementAnchorState;
     merchant: Merchant;
     save: (patch: AnchorSettlementPatch) => Promise<void>;
+    /** Persists what the anchor knows about the merchant (sep6's SEP-12 customer). */
+    saveMerchant?: (patch: AnchorMerchantPatch) => Promise<void>;
   }): Promise<SettleResult>;
   payoutTRY(input: {
     withdrawalId: string;

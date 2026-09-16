@@ -28,6 +28,8 @@ export interface AnchorEndpoints {
   transferServerSep24: string | null;
   /** SEP-38 `ANCHOR_QUOTE_SERVER`. */
   quoteServer: string | null;
+  /** SEP-12 `KYC_SERVER`. */
+  kycServer: string | null;
   authEndpoint: string;
   signingKey: string;
   fetchedAt: number;
@@ -51,7 +53,8 @@ export class AnchorSession {
   private readonly keypair: Keypair;
   private readonly networkPassphrase: string;
   private endpointsCache: AnchorEndpoints | null = null;
-  private jwt: { token: string; expiresAt: number } | null = null;
+  /** SEP-10 JWTs by memo ('' = the bare platform account) — one anchor user per memo. */
+  private jwts = new Map<string, { token: string; expiresAt: number }>();
 
   constructor(config: ConfigService) {
     this.homeDomain = config.get<string>('ANCHOR_HOME_DOMAIN') ?? '';
@@ -96,11 +99,12 @@ export class AnchorSession {
       );
     }
     // A JWT issued under a rotated SIGNING_KEY is re-negotiated against the new one.
-    if (cached && cached.signingKey !== signingKey) this.jwt = null;
+    if (cached && cached.signingKey !== signingKey) this.jwts.clear();
     this.endpointsCache = {
       transferServer: trimSlash(toml.TRANSFER_SERVER),
       transferServerSep24: trimSlash(toml.TRANSFER_SERVER_SEP0024),
       quoteServer: trimSlash(toml.ANCHOR_QUOTE_SERVER),
+      kycServer: trimSlash(toml.KYC_SERVER),
       authEndpoint,
       signingKey,
       fetchedAt: Date.now(),
@@ -122,22 +126,30 @@ export class AnchorSession {
     return url;
   }
 
-  /** SEP-10: the challenge is verified (anchor signature, home and web-auth domain, time bounds)
-   * before the platform key signs it. Cached until a minute before `exp`. */
-  async token(): Promise<string> {
-    if (this.jwt && this.jwt.expiresAt > Date.now() + 60_000) {
-      return this.jwt.token;
-    }
+  /**
+   * SEP-10 JWT for the platform account — or, with `memo`, for one user of that shared account
+   * (SEP-10 *Memos*: `sub` = `G…:memo`). The challenge is verified (anchor signature, home and
+   * web-auth domain, time bounds, memo) before the platform key signs it, and the issued JWT's
+   * `sub` must name exactly the identity asked for: an anchor that ignored the memo would
+   * otherwise merge every merchant into one user without any error. One JWT is cached per memo,
+   * until a minute before `exp`.
+   */
+  async token(memo?: string): Promise<string> {
+    const key = memo ?? '';
+    const cached = this.jwts.get(key);
+    if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
+
+    const account = this.keypair.publicKey();
     const { authEndpoint, signingKey } = await this.endpoints();
+    const query: Record<string, string> = {
+      account,
+      home_domain: this.homeDomain,
+    };
+    if (memo) query.memo = memo;
     const challenge = await this.request<{
       transaction: string;
       network_passphrase?: string;
-    }>(
-      `${authEndpoint}?${new URLSearchParams({
-        account: this.keypair.publicKey(),
-        home_domain: this.homeDomain,
-      })}`,
-    );
+    }>(`${authEndpoint}?${new URLSearchParams(query)}`);
     // SEP-10: the challenge may name its network — never sign one meant for another network.
     if (
       challenge.network_passphrase &&
@@ -147,19 +159,31 @@ export class AnchorSession {
         `${this.homeDomain} SEP-10 challenge is for "${challenge.network_passphrase}", not "${this.networkPassphrase}"`,
       );
     }
-    const { tx } = WebAuth.readChallengeTx(
+    const { tx, memo: challengeMemo } = WebAuth.readChallengeTx(
       challenge.transaction,
       signingKey,
       this.networkPassphrase,
       this.homeDomain,
       new URL(authEndpoint).hostname,
     );
+    if ((challengeMemo ?? undefined) !== memo) {
+      throw new Error(
+        `${this.homeDomain} SEP-10 challenge carries memo ${challengeMemo ?? 'none'}, asked for ${memo ?? 'none'}`,
+      );
+    }
     tx.sign(this.keypair);
     const { token } = await this.request<{ token: string }>(authEndpoint, {
       method: 'POST',
       body: { transaction: tx.toXDR() },
     });
-    this.jwt = { token, expiresAt: jwtExpiresAt(token) };
+    const expected = memo ? `${account}:${memo}` : account;
+    const sub = jwtClaims(token).sub;
+    if (sub !== expected) {
+      throw new Error(
+        `${this.homeDomain} issued a JWT for "${String(sub)}", expected "${expected}"`,
+      );
+    }
+    this.jwts.set(key, { token, expiresAt: jwtExpiresAt(token) });
     return token;
   }
 
@@ -191,12 +215,10 @@ export class AnchorSession {
     const path = new URL(url).pathname;
     if (!res.ok) {
       // The anchor no longer accepts our JWT (revoked or expired early): re-authenticate next call.
-      if (
-        (res.status === 401 || res.status === 403) &&
-        init.token !== undefined &&
-        init.token === this.jwt?.token
-      ) {
-        this.jwt = null;
+      if ((res.status === 401 || res.status === 403) && init.token) {
+        for (const [key, jwt] of this.jwts) {
+          if (jwt.token === init.token) this.jwts.delete(key);
+        }
       }
       throw new AnchorHttpError(
         res.status,
@@ -212,15 +234,19 @@ function trimSlash(url: unknown): string | null {
   return typeof url === 'string' && url ? url.replace(/\/$/, '') : null;
 }
 
+/** A JWT's payload, or `{}` if it can't be read. Not verified — only our own session reads it. */
+export function jwtClaims(token: string): { exp?: unknown; sub?: unknown } {
+  try {
+    return JSON.parse(
+      Buffer.from(token.split('.')[1], 'base64url').toString('utf8'),
+    ) as { exp?: unknown; sub?: unknown };
+  } catch {
+    return {};
+  }
+}
+
 /** `exp` of a JWT in ms; five minutes from now if it can't be read. */
 export function jwtExpiresAt(token: string, now = Date.now()): number {
-  try {
-    const payload = JSON.parse(
-      Buffer.from(token.split('.')[1], 'base64url').toString('utf8'),
-    ) as { exp?: unknown };
-    if (typeof payload.exp === 'number') return payload.exp * 1000;
-  } catch {
-    // not a readable JWT — fall through to the default
-  }
-  return now + 5 * 60_000;
+  const { exp } = jwtClaims(token);
+  return typeof exp === 'number' ? exp * 1000 : now + 5 * 60_000;
 }

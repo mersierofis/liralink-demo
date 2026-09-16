@@ -27,6 +27,7 @@ function settlement(overrides: Partial<Settlement>): Settlement {
     failReason: null,
     anchorTxHash: null,
     anchorTxXdr: null,
+    anchorMemo: null,
     ...overrides,
   };
 }

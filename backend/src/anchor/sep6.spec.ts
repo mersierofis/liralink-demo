@@ -1,5 +1,5 @@
 import { Decimal } from '../common/decimal';
-import { sep6Payout, sep6Phase } from './sep6';
+import { anchorMemoFor, sep6Payout, sep6Phase } from './sep6';
 import { TransferTransaction, withdrawMemo } from './transfer';
 
 const ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
@@ -121,5 +121,43 @@ describe('the withdraw memo', () => {
     const memo = withdrawMemo('id', '869671972907');
     expect(memo.type).toBe('id');
     expect(memo.value).toBe('869671972907');
+  });
+});
+
+describe('anchorMemoFor — the merchant’s SEP-10 identity at the anchor', () => {
+  const A = '3f2b8c1e-9a4d-4e7b-8c21-5d6f7a8b9c0d';
+  const B = '3f2b8c1e-9a4d-4e7b-8c21-000000000000';
+  const C = '0a2b8c1e-9a4d-4e7b-8c21-5d6f7a8b9c0d';
+
+  it('is stable for the same merchant — the same anchor user every time', () => {
+    expect(anchorMemoFor(A)).toBe(anchorMemoFor(A));
+    expect(anchorMemoFor(A.toUpperCase())).toBe(anchorMemoFor(A));
+  });
+
+  it('is a decimal uint64 id memo below 2^63', () => {
+    const memo = anchorMemoFor('ffffffff-ffff-4fff-bfff-ffffffffffff');
+    expect(memo).toMatch(/^[1-9][0-9]*$/);
+    expect(BigInt(memo) < 2n ** 63n).toBe(true);
+  });
+
+  it('comes from the first 16 hex digits, masked to 63 bits', () => {
+    expect(anchorMemoFor(A)).toBe(
+      (BigInt('0x3f2b8c1e9a4d4e7b') & (2n ** 63n - 1n)).toString(),
+    );
+    // The tail of the UUID does not take part …
+    expect(anchorMemoFor(B)).toBe(anchorMemoFor(A));
+    // … the head does.
+    expect(anchorMemoFor(C)).not.toBe(anchorMemoFor(A));
+  });
+
+  it('is never 0 (not a usable memo)', () => {
+    expect(anchorMemoFor('00000000-0000-4000-8000-000000000000')).toBe(
+      (BigInt('0x0000000000004000') & (2n ** 63n - 1n)).toString(),
+    );
+    expect(anchorMemoFor('80000000-0000-0000-8000-000000000000')).toBe('1');
+  });
+
+  it('refuses an id that is not a UUID rather than inventing an identity', () => {
+    expect(() => anchorMemoFor('m1')).toThrow('is not a UUID');
   });
 });
