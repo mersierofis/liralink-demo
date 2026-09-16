@@ -19,12 +19,11 @@ export function TestnetRequiredCard({ onRetry }: { onRetry: () => void }) {
               Beta
             </p>
             <h3 className="text-[15px] font-semibold leading-snug tracking-tight text-slate-900">
-              Bu bir beta sürümüdür — Testnet’i seçin
+              This is a beta build — switch to Testnet
             </h3>
             <p className="text-[13px] leading-relaxed text-slate-600">
-              Cüzdanınız Mainnet’te açık. LiraLink şu an yalnızca Stellar{' '}
-              <span className="font-medium text-slate-800">Testnet</span> üzerinde çalışır; gerçek
-              para hareket etmez.
+              Your wallet is on Mainnet. LiraLink currently runs only on Stellar{' '}
+              <span className="font-medium text-slate-800">Testnet</span>; no real money moves.
             </p>
           </div>
         </div>
@@ -33,9 +32,9 @@ export function TestnetRequiredCard({ onRetry }: { onRetry: () => void }) {
       <div className="space-y-3.5 px-4 py-4">
         <ol className="space-y-2.5">
           {[
-            { step: '1', text: 'Freighter eklentisini açın' },
-            { step: '2', text: 'Settings → Network → Testnet seçin' },
-            { step: '3', text: 'Bu sayfaya dönüp tekrar bağlanın' },
+            { step: '1', text: 'Open the Freighter extension' },
+            { step: '2', text: 'Settings → Network → select Testnet' },
+            { step: '3', text: 'Return here and connect again' },
           ].map((item) => (
             <li key={item.step} className="flex items-start gap-2.5 text-[13px] text-slate-700">
               <span className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[10px] font-semibold text-white">
@@ -51,7 +50,7 @@ export function TestnetRequiredCard({ onRetry }: { onRetry: () => void }) {
           className="h-11 w-full rounded-lg bg-slate-900 text-sm font-medium text-white hover:bg-slate-800"
           onClick={onRetry}
         >
-          Testnet’e geçtim, tekrar bağlan
+          I switched to Testnet — reconnect
         </Button>
       </div>
     </div>

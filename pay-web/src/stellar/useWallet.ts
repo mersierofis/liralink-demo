@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { Horizon } from '@stellar/stellar-sdk'
+import { isWalletRejection, walletRejectionMessage } from './walletErrors'
 import { getWalletKit, WalletNetwork } from './walletKit'
 
 export type WalletErrorKind = 'mainnet' | 'generic'
@@ -47,9 +48,10 @@ async function assertTestnetOrHorizon(address: string): Promise<void> {
   try {
     await server.loadAccount(address)
   } catch {
+    // Unfunded testnet account — not Mainnet. Show Friendbot guidance.
     throw new WalletNetworkError(
-      'mainnet',
-      'Could not load this account on Stellar Testnet. Switch the wallet to Testnet and fund it with Friendbot.',
+      'generic',
+      'This Stellar account is not funded on testnet yet. Fund it with Friendbot at lab.stellar.org, then reconnect.',
     )
   }
 }
@@ -133,11 +135,10 @@ export function useWallet() {
         })
         return signedTxXdr
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        if (/reject|denied|cancel|user/i.test(msg)) {
-          throw new Error('Signature rejected in the wallet. Nothing was sent.')
+        if (isWalletRejection(err)) {
+          throw new Error(walletRejectionMessage())
         }
-        throw err instanceof Error ? err : new Error(msg)
+        throw err instanceof Error ? err : new Error(String(err))
       }
     },
     [state.address],

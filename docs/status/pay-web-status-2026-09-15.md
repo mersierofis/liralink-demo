@@ -1,31 +1,35 @@
-# pay-web status — 2026-09-15 (update)
+# pay-web status — 2026-09-16 (PR #26 review fixes)
 
-Previous: `docs/status/pay-web-status-2026-09-13.md`. This update reflects Hasan’s Cursor queue (15 Sep).
+Previous: `docs/status/pay-web-status-2026-09-15.md`.
 
-## Done this pass (branch `pay-web/scaffold` → PR #26)
+## Done this pass
 
-| Queue item | Status | Commit / notes |
+| Item | Status | Notes |
 |---|---|---|
-| 1 BLOCKER — PR wallet fixes | DONE | https://github.com/mersierofis/liralink-demo/pull/26 — Freighter+xBull, Mainnet beta card, no Connecting hang |
-| 2 REQUIRED — QuoteCountdown lock | DONE | `11992a5` — on-chain (`quoteExpiresAt === expiresAt`) → “Rate locked until link expires”; else mm:ss |
-| 3 REQUIRED — x402 rail labels | DONE | `8d4557c` — `PayRail` includes `x402`; receipt shows memo/contract/x402 labels |
-| 4 REQUIRED — Pay via contract | DONE (code) | `ff627c0` (+ dist follow-up) — primary button when `rails.contract` + `VITE_CONTRACT_RAIL≠false`; memo fallback; errors shown verbatim. **Live Freighter contract pay still unverified on device.** |
-| 5 NICE — USDC round 2 dp | DONE | `e01f151` — half-up rounding in `formatUSDCDisplay` |
+| English TestnetRequiredCard | DONE | Heading, body, steps, button |
+| Contract rail only when `status === 'open'` | DONE | Hides on underpaid (full on-chain amount would overpay) |
+| Contract sim / wallet rejection errors | DONE | Check `isSimulationError` before wallet; narrow rejection mapping |
+| Retry last rail | DONE | ErrorState retries `lastRail` |
+| FAILED / StillPending | DONE | Throw on FAILED; `watcher.onSubmitted` → `/submitted` + return hash on StillPending |
+| Unfunded ≠ Mainnet | DONE | Horizon miss → Friendbot message (`generic`) |
+| Balance/trustline before contract | DONE | Same friendly copy as memo rail |
+| Types rebase | DONE | `pay-web/src/api/types.ts` synced from `docs/api.types.ts` |
+| invoice-client packaging | DONE | `dist/` untracked; postinstall uses `npm ci`; CI path includes package |
+| Scope | DONE | Removed merchant-web status doc; dropped `console.info` tx logs |
 
 ## Verify locally
 
 ```bash
 cd pay-web && npm ci && npm run typecheck && npm run lint && npm test && npm run build
-npm run dev  # :5174 — 390×844
+npm run dev  # :5174
 ```
 
-- On-chain open link: no multi-hour countdown; “Rate locked…”.
-- `rails.contract` present: primary “Pay … via contract”, secondary memo fallback.
-- Mainnet Freighter: beta Testnet card.
-- Paid receipt with `rail: memo|contract|x402` shows the matching label.
+- Underpaid link: memo only (no contract button).
+- Open on-chain link: contract primary + memo fallback.
+- Mainnet Freighter: English beta card.
+- Unfunded testnet account: Friendbot message (not Mainnet card).
+- `VITE_CONTRACT_RAIL=false` requires a **rebuild and redeploy** (Vite inlines env at build time).
 
-## Still open / for Hasan
+## Still open
 
-- Phone Freighter **contract** payment end-to-end (needs open on-chain link + USDC trustline).
-- If contract rail misbehaves in demo: set `VITE_CONTRACT_RAIL=false`.
-- Memo Freighter 1 USDC proof in team chat: still ops/unverified here.
+- Live Freighter contract pay on device (Soroban invoke → receipt `Paid via smart contract`).

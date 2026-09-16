@@ -27,6 +27,7 @@ jobs:
           filters: |
             pay-web:
               - 'pay-web/**'
+              - 'packages/invoice-client/**'
               - '.nvmrc'
               - '.github/workflows/pay-web.yml'
 

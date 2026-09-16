@@ -1,7 +1,5 @@
 node_modules/
 dist/
-!packages/invoice-client/dist/
-!packages/invoice-client/dist/**
 build/
 .env
 *.log

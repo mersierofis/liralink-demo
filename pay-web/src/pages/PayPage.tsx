@@ -48,6 +48,7 @@ export function PayPage() {
   const [payError, setPayError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [loadingRail, setLoadingRail] = useState<'memo' | 'contract' | null>(null)
+  const [lastRail, setLastRail] = useState<'memo' | 'contract'>('memo')
   const [pendingTxHash, setPendingTxHash] = useState<string | null>(null)
   const [balances, setBalances] = useState<{
     hasTrustline: boolean
@@ -100,6 +101,8 @@ export function PayPage() {
     setPayError(null)
     setSubmitting(true)
     setLoadingRail(rail)
+    setLastRail(rail)
+    let alreadySubmitted = false
     try {
       if (opts?.skipWallet || mockPay) {
         const fakeHash = `mock${Date.now().toString(16).padStart(56, '0')}`.slice(0, 64)
@@ -119,6 +122,12 @@ export function PayPage() {
           quote: mergedQuote,
           payer: wallet.address,
           signXdr: wallet.signXdr,
+          onSubmitted: (txHash) => {
+            alreadySubmitted = true
+            setPendingTxHash(txHash)
+            setPhase('paying')
+            void submitted.mutateAsync(txHash).catch(() => undefined)
+          },
         })
         hash = result.hash
       } else {
@@ -128,14 +137,25 @@ export function PayPage() {
         hash = result.hash
       }
 
-      console.info('[pay-web] submitted Stellar tx', hash, 'rail=', rail)
-      setPendingTxHash(hash)
-      setPhase('paying')
-      void submitted.mutateAsync(hash).catch(() => undefined)
+      if (!alreadySubmitted) {
+        setPendingTxHash(hash)
+        setPhase('paying')
+        void submitted.mutateAsync(hash).catch(() => undefined)
+      }
       void queryClient.invalidateQueries({ queryKey: ['pay', code] })
     } catch (err) {
-      setPhase('quote')
-      setPayError(err instanceof Error ? err.message : 'Payment failed')
+      const msg = err instanceof Error ? err.message : 'Payment failed'
+      // FAILED on-chain still fires onSubmitted; reset UI so we don't poll forever.
+      if (alreadySubmitted && /failed on-chain/i.test(msg)) {
+        setPhase('quote')
+        setPendingTxHash(null)
+        setPayError(msg)
+      } else if (alreadySubmitted) {
+        setPayError(msg)
+      } else {
+        setPhase('quote')
+        setPayError(msg)
+      }
     } finally {
       setSubmitting(false)
       setLoadingRail(null)
@@ -269,14 +289,7 @@ export function PayPage() {
                 <ErrorState
                   title="Payment failed"
                   message={payError}
-                  onRetry={() =>
-                    void runPay({
-                      rail:
-                        isContractRailEnabled() && mergedQuote.rails.contract
-                          ? 'contract'
-                          : 'memo',
-                    })
-                  }
+                  onRetry={() => void runPay({ rail: lastRail })}
                 />
               ) : null}
               <PayButton
@@ -292,7 +305,9 @@ export function PayPage() {
                 loading={submitting}
                 loadingRail={loadingRail}
                 hasContractRail={
-                  isContractRailEnabled() && Boolean(mergedQuote.rails.contract)
+                  isContractRailEnabled() &&
+                  Boolean(mergedQuote.rails.contract) &&
+                  mergedQuote.status === 'open'
                 }
                 onPayMemo={() => void runPay({ skipWallet: mockPay, rail: 'memo' })}
                 onPayContract={() => void runPay({ rail: 'contract' })}

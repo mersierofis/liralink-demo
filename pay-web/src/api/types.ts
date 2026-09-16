@@ -205,10 +205,23 @@ export interface UnallocatedCredit {
   createdAt: string;
 }
 
+/** GET /unallocated `summary` — over ALL pages, not the current one. remainingUSDC = creditedUSDC −
+ * withdrawnUSDC and equals Balance.unallocatedUSDC; show the three next to the balance card. */
+export interface UnallocatedSummary {
+  creditedUSDC: string; // 7 dp — Σ amountUSDC of every UnallocatedCredit
+  withdrawnUSDC: string; // 7 dp — Σ non-failed USDC withdrawals with source 'unallocated'
+  remainingUSDC: string; // 7 dp — creditedUSDC − withdrawnUSDC
+}
+
 // ---- Paginated list envelopes, as returned by GET /links, /payments, /unallocated, /usdc-withdrawals ----
 export interface Paginated<T> {
   items: T[];
   total: number;
+}
+
+/** What GET /unallocated returns. */
+export interface UnallocatedList extends Paginated<UnallocatedCredit> {
+  summary: UnallocatedSummary;
 }
 
 // ---- Auth ----
