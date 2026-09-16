@@ -27,14 +27,14 @@ Live: [merchant panel](https://merchant-web.tutorialplatform.com) ·
    ```
    Want `READY`. Exit 1 prints `NOT READY` and one line per problem. Thresholds: payer ≥ 5 USDC,
    platform ≥ 1 USDC. Also confirm the row reads `anchor  mock (balance)`.
-3. **`npm run demo:reset`** — dry run first, then apply:
+3. **`npm run demo:reset`** — read the dry run, then apply:
    ```
-   npm run demo:reset -- --dry-run
-   npm run demo:reset
+   npm run demo:reset           # dry run: prints what would change, writes nothing
+   npm run demo:reset -- --yes  # applies it
    ```
    It touches only `demo@liralink.app`: deletes mock withdrawals, completes mock settlements.
-   It never touches links, payments or non-mock rows. **No live-DB guard — plain `demo:reset`
-   writes immediately**, so read the dry run first. Re-run `demo:check` after.
+   It never touches links, payments or non-mock rows. Writing needs `--yes`, so a bare run is
+   always safe to try. Re-run `demo:check` after.
 4. **Payer wallet (Yunus's phone):** Freighter on **Testnet**, ≥ 20 USDC and a little XLM, USDC
    trustline to `GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`. Setup steps:
    `pay-web/README.md`. 20 USDC covers the demo link plus retries; `demo:check` only enforces 5.
