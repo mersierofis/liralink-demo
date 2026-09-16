@@ -33,6 +33,10 @@ export interface TransferTransaction {
   withdraw_anchor_account?: string;
   withdraw_memo?: string;
   withdraw_memo_type?: string;
+  /** SEP-6 withdrawal: where the fiat went (tr-mock-anchor: the payout IBAN). */
+  to?: string | null;
+  /** SEP-6 withdrawal: the payout's bank reference. */
+  external_transaction_id?: string | null;
 }
 
 /**

@@ -6,6 +6,9 @@ import { randomBytes } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { AnchorHttpError, AnchorSession } from '../src/anchor/anchor-session';
+import { anchorMemoFor } from '../src/anchor/sep6';
+import type { TransferTransaction } from '../src/anchor/transfer';
 import { AppModule } from '../src/app.module';
 import { Decimal } from '../src/common/decimal';
 import { Settlement } from '../src/generated/prisma/client';
@@ -23,6 +26,7 @@ const IBAN = 'TR330006100519786457841326';
   let app: INestApplication<App>;
   let prisma: PrismaService;
   let payments: PaymentsService;
+  let session: AnchorSession;
   const email = `e2e-sep6-${Date.now()}@liralink.app`;
   let token: string;
   let merchantId: string;
@@ -98,6 +102,7 @@ const IBAN = 'TR330006100519786457841326';
     );
     prisma = moduleFixture.get(PrismaService);
     payments = moduleFixture.get(PaymentsService);
+    session = moduleFixture.get(AnchorSession);
     await app.init();
 
     const res = await http()
@@ -213,5 +218,39 @@ const IBAN = 'TR330006100519786457841326';
     });
     expect(item).not.toHaveProperty('anchorStatus');
     expect(item).not.toHaveProperty('anchorTxXdr');
+    expect(item).not.toHaveProperty('anchorMemo');
+
+    // Issue #21: the withdrawal belongs to this merchant's own anchor user (sub G…:memo) …
+    const memo = anchorMemoFor(merchantId);
+    expect(s.anchorMemo).toBe(memo);
+    const transferServer = await session.transferServer('sep6');
+    const txnUrl = `${transferServer}/transaction?${new URLSearchParams({ id: s.anchorRef! })}`;
+    const { transaction } = await session.request<{
+      transaction: TransferTransaction;
+    }>(txnUrl, { token: await session.token(memo) });
+    // … so the bare platform account — every other merchant's view — cannot even see it.
+    const asOmnibus = await session
+      .request(txnUrl, { token: await session.token() })
+      .then(
+        () => 200,
+        (err: unknown) => (err instanceof AnchorHttpError ? err.status : -1),
+      );
+    expect(asOmnibus).toBe(404);
+
+    // The TRY went to the IBAN registered over SEP-12, not the sandbox's default account.
+    const merchant = await prisma.merchant.findUniqueOrThrow({
+      where: { id: merchantId },
+    });
+    expect(merchant).toMatchObject({
+      sep12Iban: IBAN,
+      sep12HomeDomain: 'tr-mock-anchor.fly.dev',
+    });
+    expect(merchant.sep12CustomerId).toMatch(/^cus_/);
+    expect(transaction.to).toBe(IBAN);
+    expect(transaction.external_transaction_id).toEqual(expect.any(String));
+    console.log(
+      `sep6 e2e: withdrawal ${s.anchorRef} as ${memo} → ${transaction.to} ` +
+        `(bank ref ${transaction.external_transaction_id}), ${netTRY.toFixed(2)} TRY, tx ${s.anchorTxHash}`,
+    );
   });
 });

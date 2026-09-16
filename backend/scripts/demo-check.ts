@@ -6,12 +6,15 @@
  *   npm run demo:check -- --api https://liralink-api.tutorialplatform.com/api --payer G...
  *
  * --api defaults to http://localhost:3000/api. The payer is --payer, else DEMO_PAYER_ADDRESS, else
- * `stellar keys address payer`. Horizon, USDC and DATABASE_URL come from backend/.env; links and
+ * `stellar keys address payer`. The anchor is --anchor, else ANCHOR_HOME_DOMAIN, else
+ * tr-mock-anchor.fly.dev. Horizon, USDC and DATABASE_URL come from backend/.env; links and
  * payments are the demo merchant's (demo@liralink.app).
  *
- * Prints: /health, platform + payer USDC balances, open links, anchor mode, last 3 payments with
- * rails. Exits 1 with a NOT READY line if the API is down/unhealthy, the listener is stopped, or a
- * balance can't pay a demo link.
+ * Prints: /health, the anchor's /health (rate source, treasury USDC), platform + payer USDC
+ * balances, open links, anchor mode, last 3 payments with rails. Exits 1 with a NOT READY line if
+ * the API is down/unhealthy, the listener is stopped, the anchor is unreachable or unhealthy, or a
+ * balance can't pay a demo link. The anchor is checked even while the API runs `mock`: the
+ * Saturday checklist requires READY *before* switching to sep6.
  */
 import { execFileSync } from 'child_process';
 import * as path from 'path';
@@ -37,7 +40,18 @@ interface Health {
   settlementMode: string;
 }
 
-function parseArgs(argv: string[]): { api: string; payer?: string } {
+/** tr-mock-anchor's `GET /health`, the parts we print. */
+interface AnchorHealth {
+  ok?: boolean;
+  treasury?: { address?: string; usdc_balance?: string; low_balance?: boolean };
+  rates?: { sell_rate?: string; spread_bps?: number; source?: string };
+}
+
+function parseArgs(argv: string[]): {
+  api: string;
+  payer?: string;
+  anchor: string;
+} {
   const out: Record<string, string> = {};
   for (let i = 0; i < argv.length; i += 2) {
     if (!argv[i].startsWith('--') || argv[i + 1] === undefined) {
@@ -48,7 +62,21 @@ function parseArgs(argv: string[]): { api: string; payer?: string } {
   return {
     api: (out.api ?? 'http://localhost:3000/api').replace(/\/$/, ''),
     payer: out.payer ?? process.env.DEMO_PAYER_ADDRESS,
+    anchor:
+      out.anchor || process.env.ANCHOR_HOME_DOMAIN || 'tr-mock-anchor.fly.dev',
   };
+}
+
+async function fetchAnchorHealth(domain: string): Promise<AnchorHealth | string> {
+  try {
+    const res = await fetch(`https://${domain}/health`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return `HTTP ${res.status}`;
+    return (await res.json()) as AnchorHealth;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }
 
 async function fetchHealth(api: string): Promise<Health | string> {
@@ -103,7 +131,7 @@ function ago(date: Date): string {
 const short = (s: string) => `${s.slice(0, 6)}…${s.slice(-4)}`;
 
 async function main(): Promise<void> {
-  const { api, payer: payerArg } = parseArgs(process.argv.slice(2));
+  const { api, payer: payerArg, anchor } = parseArgs(process.argv.slice(2));
   const problems: string[] = [];
   const row = (label: string, value: string) =>
     console.log(`  ${label.padEnd(18)}${value}`);
@@ -127,10 +155,11 @@ async function main(): Promise<void> {
         : health.platformAccount;
     const payer = payerArg ?? payerFromCli();
 
-    const [platformUSDC, payerUSDC, merchant] = await Promise.all([
+    const [platformUSDC, payerUSDC, merchant, anchorHealth] = await Promise.all([
       platform ? usdcBalance(server, platform) : 'unknown',
       payer ? usdcBalance(server, payer) : 'skipped',
       prisma.merchant.findUnique({ where: { email: DEMO_EMAIL } }),
+      fetchAnchorHealth(anchor),
     ]);
 
     console.log(`LiraLink demo check — ${new Date().toISOString()}`);
@@ -149,6 +178,29 @@ async function main(): Promise<void> {
         problems.push(`/health ok=false (horizon ${health.horizon})`);
       if (health.listener !== 'running')
         problems.push(`payment listener is ${health.listener}`);
+    }
+
+    // The anchor is a shared sandbox the organisers may reset or redeploy before the event.
+    if (typeof anchorHealth === 'string') {
+      row('anchor health', `DOWN (${anchorHealth}) · ${anchor}`);
+      problems.push(`anchor ${anchor}/health unreachable: ${anchorHealth}`);
+    } else {
+      const { rates, treasury } = anchorHealth;
+      row(
+        'anchor health',
+        `${anchorHealth.ok ? 'ok' : 'NOT OK'} · ${anchor}`,
+      );
+      row(
+        'anchor rate',
+        `${rates?.sell_rate ?? '?'} TRY/USDC sell · source ${rates?.source ?? '?'} · spread ${rates?.spread_bps ?? '?'} bps`,
+      );
+      row(
+        'anchor treasury',
+        `${treasury?.usdc_balance ?? '?'} USDC${treasury?.low_balance ? ' (LOW)' : ''}` +
+          (treasury?.address ? ` (${short(treasury.address)})` : ''),
+      );
+      if (anchorHealth.ok !== true)
+        problems.push(`anchor ${anchor}/health ok=${String(anchorHealth.ok)}`);
     }
 
     const balanceRow = (
@@ -211,6 +263,11 @@ async function main(): Promise<void> {
           `${ago(p.detectedAt).padEnd(8)} ${p.link.status.padEnd(10)}tx ${short(p.txHash)}`,
       );
     }
+  } catch (err) {
+    // A crash is never READY — without this the finally below printed READY above the stack trace.
+    problems.push(
+      `demo:check crashed: ${err instanceof Error ? err.message.trim().split('\n').pop() : String(err)}`,
+    );
   } finally {
     await prisma.$disconnect();
     console.log(

@@ -125,6 +125,12 @@ export class SettlementsService implements OnApplicationBootstrap {
         save: async (patch) => {
           await this.prisma.settlement.update({ where: { id }, data: patch });
         },
+        saveMerchant: async (patch) => {
+          await this.prisma.merchant.update({
+            where: { id: merchant.id },
+            data: patch,
+          });
+        },
       });
       switch (result.status) {
         case 'completed': {
