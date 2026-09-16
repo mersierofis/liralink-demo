@@ -3,9 +3,15 @@
 // went live with phase 2 part D).
 
 export type LinkStatus = 'open' | 'underpaid' | 'paid' | 'expired' | 'cancelled';
-export type PayRail = 'contract' | 'memo';
+export type PayRail = 'contract' | 'memo' | 'x402';
 export type SettleStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type WdStatus = 'requested' | 'processing' | 'completed' | 'failed';
+// POST /usdc-withdrawals: 'submitted' until the payment is on the ledger.
+export type UsdcWdStatus = 'submitted' | 'completed' | 'failed';
+export type UsdcWdSource = 'saved' | 'unallocated';
+// Why a USDC withdrawal is 'failed' — terminal, the amount went back to its source balance:
+// failed_on_ledger: the transaction landed but failed; expired_unsubmitted: it never landed in time.
+export type UsdcWdFailReason = 'failed_on_ledger' | 'expired_unsubmitted';
 // 'balance': TRY accrues in availableTRY and the merchant withdraws (mock anchor).
 // 'auto_payout': the anchor pays the IBAN during settlement; POST /withdrawals → 409 (sep24 anchor).
 export type SettlementMode = 'balance' | 'auto_payout';
@@ -25,8 +31,8 @@ export interface Merchant {
   businessName: string;
   iban?: string;
   autoSavePercent: number;
-  // Excess USDC from overpaid links, parked here rather than auto-converted to
-  // TRY — visible to the merchant, handled manually (refund or credit, Phase 3).
+  // Excess USDC from overpaid links + stray payments, parked here rather than auto-converted to
+  // TRY. The merchant can send it to their own wallet (POST /usdc-withdrawals, source 'unallocated').
   unallocatedUSDC: string; // decimal string, 7 dp
   settlementMode: SettlementMode; // 'auto_payout' → hide Withdraw, show "Paid to IBAN" + paidOutTRY
   createdAt: string;
@@ -35,7 +41,7 @@ export interface Merchant {
 export interface Payment {
   id: string;
   linkId: string;
-  rail: PayRail; // 'memo' = classic payment with text memo; 'contract' = paid through the Soroban invoice contract
+  rail: PayRail; // 'memo' = classic payment with text memo; 'contract' = paid through the Soroban invoice contract; 'x402' = agent paid GET /pay/:code/agent (testnet)
   txHash: string;
   payerAddress: string;
   amountUSDC: string; // decimal string, 7 dp — the amount of *this* transaction, not the link total
@@ -87,6 +93,10 @@ export interface Settlement {
   status: SettleStatus;
   anchorRef?: string;
   failReason: SettleFailReason | null; // set only when status is 'failed'
+  // sep24 at a real anchor: the anchor's KYC / bank-details page, waiting for the merchant — show a
+  // "Complete verification" button. Non-null only while status is 'processing' and the anchor waits;
+  // the settlement resumes by itself once the form is done. Treat a missing field as null.
+  interactiveUrl: string | null;
   createdAt: string;
   completedAt?: string;
 }
@@ -102,11 +112,27 @@ export interface Withdrawal {
   completedAt?: string;
 }
 
+/** One row of GET /usdc-withdrawals (and the 201 of POST) — USDC sent from the platform account to
+ * the merchant's own Stellar wallet. The amount leaves `source` immediately; a 'failed' row gave it back. */
+export interface UsdcWithdrawal {
+  id: string;
+  merchantId: string;
+  amountUSDC: string; // decimal string, 7 dp
+  destination: string; // G… address
+  source: UsdcWdSource;
+  status: UsdcWdStatus;
+  txHash: string; // known from the first response (signed before submitting)
+  explorerUrl: string;
+  failReason: UsdcWdFailReason | null; // set only when status is 'failed'
+  createdAt: string;
+  completedAt?: string;
+}
+
 export interface Balance {
   availableTRY: string;
   pendingTRY: string;
-  savedUSDC: string;
-  unallocatedUSDC: string;
+  savedUSDC: string; // 7 dp — net of non-failed USDC withdrawals from 'saved'
+  unallocatedUSDC: string; // 7 dp — net of non-failed USDC withdrawals from 'unallocated'
   paidOutTRY: string; // 2 dp — Σ netTRY of completed auto_payout settlements (already on the IBAN)
 }
 
@@ -163,10 +189,39 @@ export interface PaymentListItem extends Payment {
   settlement: Settlement | null;
 }
 
-// ---- Paginated list envelopes, as returned by GET /links and GET /payments ----
+/** One row of GET /unallocated — every credit to Merchant.unallocatedUSDC, newest first. The rows
+ * of all pages sum to the credits; unallocatedUSDC = that sum − non-failed USDC withdrawals from
+ * 'unallocated' (GET /usdc-withdrawals). 'stray': a payment to a link that was no longer payable
+ * (paid/expired/cancelled), credited in full; 'overpaid': the excess over quotedUSDC on the
+ * payment that completed a link. */
+export interface UnallocatedCredit {
+  id: string;
+  source: 'stray' | 'overpaid';
+  txHash: string;
+  explorerUrl: string;
+  amountUSDC: string; // decimal string, 7 dp — what this row added to unallocatedUSDC
+  linkCode: string;
+  reason: string; // e.g. 'link status is "paid"' · 'received 3.0000000 of 2.0000000 USDC quoted'
+  createdAt: string;
+}
+
+/** GET /unallocated `summary` — over ALL pages, not the current one. remainingUSDC = creditedUSDC −
+ * withdrawnUSDC and equals Balance.unallocatedUSDC; show the three next to the balance card. */
+export interface UnallocatedSummary {
+  creditedUSDC: string; // 7 dp — Σ amountUSDC of every UnallocatedCredit
+  withdrawnUSDC: string; // 7 dp — Σ non-failed USDC withdrawals with source 'unallocated'
+  remainingUSDC: string; // 7 dp — creditedUSDC − withdrawnUSDC
+}
+
+// ---- Paginated list envelopes, as returned by GET /links, /payments, /unallocated, /usdc-withdrawals ----
 export interface Paginated<T> {
   items: T[];
   total: number;
+}
+
+/** What GET /unallocated returns. */
+export interface UnallocatedList extends Paginated<UnallocatedCredit> {
+  summary: UnallocatedSummary;
 }
 
 // ---- Auth ----

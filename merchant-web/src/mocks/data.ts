@@ -85,6 +85,7 @@ function makePaidLink(opts: {
     provider: 'mock',
     status: 'completed',
     failReason: null,
+    interactiveUrl: null,
     anchorRef: `mock-settle-${opts.code}`,
     createdAt: detectedAt,
     completedAt: detectedAt,
@@ -212,6 +213,7 @@ export function simulatePayment(linkId: string) {
       provider: 'mock',
       status: 'pending',
       failReason: null,
+      interactiveUrl: null,
       createdAt: new Date().toISOString(),
     }
     state.settlements.unshift(settlement)
