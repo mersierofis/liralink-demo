@@ -1,6 +1,6 @@
 # LiraLink
 
-A Turkish merchant or exporter creates a **payment link** priced in Turkish lira. A customer **abroad** opens it on their phone and pays in **USDC on Stellar** from their own wallet. LiraLink detects the on-chain payment within seconds, converts it to lira through a **Stellar anchor (SEP-24)**, and the merchant sees a **TRY balance** paid out to their IBAN. The merchant never touches crypto: they sell in lira and receive lira. Built for Rise In × Stellar Pro (Istanbul, 19–20 Sept 2026) by team MersiErOfis. **Testnet only.**
+A Turkish merchant or exporter creates a **payment link** priced in Turkish lira. A customer **abroad** opens it on their phone and pays in **USDC on Stellar** from their own wallet. LiraLink detects the on-chain payment within seconds, converts it to lira through a **Stellar anchor (SEP-6 or SEP-24)**, and the merchant sees a **TRY balance** paid out to their IBAN. The merchant never touches crypto: they sell in lira and receive lira. Built for Rise In × Stellar Pro (Istanbul, 19–20 Sept 2026) by team MersiErOfis. **Testnet only.**
 
 ## Live
 
@@ -22,7 +22,7 @@ flowchart LR
   API["LiraLink API<br/>NestJS + PostgreSQL"] --> H["Horizon<br/>payment stream"]
   API --> RPC["Soroban RPC<br/>getEvents"]
   RPC --> C["invoice contract<br/>(Soroban, testnet)"]
-  API -->|"SEP-1 · SEP-10 · SEP-24"| AN["Anchor<br/>USDC → TRY"]
+  API -->|"SEP-1 · SEP-10 · SEP-6 / SEP-24 · SEP-38"| AN["Anchor<br/>USDC → TRY"]
   API -->|"verify / settle"| X["x402.org facilitator<br/>(Coinbase, testnet)"]
   X --> H
 ```
@@ -43,15 +43,19 @@ The memo rail is the wallet-friendly default. x402 is **experimental**: it runs 
 
 ## Anchor integration
 
-USDC → TRY settlement is a SEP-24 **withdraw** per paid link. The flow is SEP-1 discovery, anchor `/info` limit checks, then SEP-10 auth with the platform key. The API opens an interactive withdraw, sends the USDC to the anchor with its memo, and follows the anchor to `completed` with the fee netted (`feeUSDC`, `netTRY`). Full walkthrough: **[docs/anchor.md](docs/anchor.md)**.
+USDC → TRY settlement is an anchor **withdraw** per paid link, in two flavours behind one adapter interface. Both share SEP-1 discovery, `/info` limit checks and SEP-10 auth with the platform key; the API then sends the USDC to the anchor with the memo it asked for and follows the transaction to `completed`, netting the fee (`feeUSDC`, `netTRY`). The signed payment is stored before submit, so a retry can never pay twice. Full walkthrough: **[docs/anchor.md](docs/anchor.md)**.
 
-**Manual-KYC flow (the real-anchor path):** the settlement stays `processing` and exposes the anchor's `interactiveUrl`. The merchant panel shows a "Complete verification" button. The person fills in KYC and bank details on the anchor's own page, and the backend picks it up within a minute and finishes the payout. Nothing is ever marked failed while the anchor waits. The signed payment is stored before submit, so a retry can never pay twice. The SEP-24 flow runs end-to-end against the SDF test anchor (`testanchor.stellar.org`, a live e2e settles 1 testnet USDC to `completed`), and a manual e2e walks the browser KYC path. The live demo runs the `mock` adapter (same interface) until a licensed TRY anchor is wired in.
+- **SEP-6 — `ANCHOR_PROVIDER=sep6`, the Turkish lira rail.** Against the hackathon's official TRY anchor, **[`tr-mock-anchor.fly.dev`](https://tr-mock-anchor.fly.dev)**. Fully programmatic: `GET /withdraw` hands back the anchor's treasury account and a `MEMO_ID`, so there is no human step and no interactive page — `interactiveUrl` is always null. `netTRY` is the lira the anchor itself reports paying out. With `FX_PROVIDER=anchor` a link also locks the anchor's own **SEP-38** rate (~48 TRY/USDC) rather than the mock 34.00, so the USDC quoted is what the settlement really clears at. A live e2e settles ~1 real testnet USDC to `completed`.
+- **SEP-24 — `ANCHOR_PROVIDER=sep24`, the interactive rail.** Against SDF's `testanchor.stellar.org` (USD out). The settlement stays `processing` and exposes the anchor's `interactiveUrl`; the merchant panel shows a "Complete verification" button, the person fills in KYC and bank details on the anchor's own page, and the backend picks it up within a minute. Nothing is ever marked failed while the anchor waits. A live e2e settles 1 testnet USDC, and a manual e2e walks the browser KYC path.
+
+The live demo still runs the `mock` adapter (same interface); flipping it to `sep6` is a one-line `.env` change, checklisted in [docs/anchor.md](docs/anchor.md).
 
 ## Stellar skills used
 
 - **Classic payments + text memos, USDC trustlines, Horizon streaming:** the core memo rail and the payment listener (cursor-persisted, idempotent per operation).
 - **Soroban smart contract (Rust, soroban-sdk):** `contracts/invoice` with admin-auth `create`/`cancel`, payer-auth `pay` through the **USDC Stellar Asset Contract**, RPC `getEvents` polling, and TS bindings in `packages/invoice-client`.
-- **SEP-1 / SEP-10 / SEP-24:** anchor discovery, web auth with challenge verification, and interactive withdraw, all in `backend/src/anchor`.
+- **SEP-1 / SEP-10 / SEP-6 / SEP-24 / SEP-38:** anchor discovery, web auth with challenge verification, programmatic and interactive withdraws, and rate quotes — all in `backend/src/anchor`, sharing one `AnchorSession`.
+- **TR Mock Anchor skill:** [`skills/anchor-tr`](skills/anchor-tr/SOURCE.md) — the hackathon's official `SKILL.md` for `tr-mock-anchor.fly.dev`, vendored unmodified. It is the source for the SEP-6 adapter (endpoint layout, treasury address, the `Memo.id` requirement, SEP-38 asset ids); `SOURCE.md` records where the running anchor disagrees with it.
 - **Stellar standards skill:** [`skills/standards`](skills/standards/SOURCE.md). Its anchor section pointed us to SEP-1/10/24 (SEP-12 not used), and the adapter is checked against those specs in [docs/anchor.md → Spec review](docs/anchor.md). Upstream has no separate anchors skill.
 - **x402 agentic payments:** from the official Stellar skill [`skills/agentic-payments`](skills/agentic-payments/SOURCE.md), vendored unmodified from `stellar/stellar-dev-skill`.
 - **Stellar Wallets Kit / Freighter:** the payer connects and signs in pay-web.

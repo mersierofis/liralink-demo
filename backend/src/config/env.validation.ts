@@ -20,11 +20,13 @@ export const envSchema = z.object({
   // Empty disables the contract rail (no rails.contract, no event polling).
   INVOICE_CONTRACT_ID: z.string().optional().default(''),
 
-  FX_PROVIDER: z.enum(['mock', 'live']).default('mock'),
+  // `anchor`: the SEP-38 rate of ANCHOR_HOME_DOMAIN, so a link locks the rate the anchor will
+  // actually settle at. Falls back to the mock rate when the quote call fails.
+  FX_PROVIDER: z.enum(['mock', 'live', 'anchor']).default('mock'),
   FX_MOCK_RATE_TRY_PER_USDC: z.coerce.number().positive(),
   FX_LIVE_URL: z.string().optional().default(''),
 
-  ANCHOR_PROVIDER: z.enum(['mock', 'sep24']).default('mock'),
+  ANCHOR_PROVIDER: z.enum(['mock', 'sep24', 'sep6']).default('mock'),
   ANCHOR_HOME_DOMAIN: z.string().optional().default(''),
   // testanchor.stellar.org only: its reference server, where the interactive KYC form posts — the
   // backend fills that form in itself. Empty (real anchors): the merchant completes interactiveUrl.

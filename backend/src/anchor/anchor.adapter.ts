@@ -7,7 +7,7 @@ export const ANCHOR_ADAPTER = Symbol('ANCHOR_ADAPTER');
  * provider it was created with, even after ANCHOR_PROVIDER changes. */
 export const ANCHOR_ADAPTERS = Symbol('ANCHOR_ADAPTERS');
 
-export type AnchorProviderName = 'mock' | 'sep24';
+export type AnchorProviderName = 'mock' | 'sep24' | 'sep6';
 
 /**
  * How TRY reaches the merchant. `balance`: it accrues in availableTRY and is withdrawn manually.
@@ -45,8 +45,12 @@ export type AnchorSettlementPatch = Partial<
 >;
 
 export type SettleResult =
-  /** feeUSDC: what the anchor kept of amountUSDC — netTRY is derived from it. */
-  | { status: 'completed'; ref: string; feeUSDC: Decimal }
+  /**
+   * feeUSDC: what the anchor kept of amountUSDC — netTRY is derived from it, unless the adapter
+   * also reports `netTRY`, the fiat the anchor says it actually paid out (SEP-6 `amount_out`),
+   * which is authoritative and used as-is.
+   */
+  | { status: 'completed'; ref: string; feeUSDC: Decimal; netTRY?: Decimal }
   /** Started and not finished yet — the minute job calls settleToTRY again to resume. */
   | { status: 'processing'; ref: string }
   /** Can't start yet (nothing sent); stays `pending` with this reason and is retried. */

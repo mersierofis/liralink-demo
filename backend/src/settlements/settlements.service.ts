@@ -130,11 +130,15 @@ export class SettlementsService implements OnApplicationBootstrap {
         case 'completed': {
           let netTRY: ReturnType<typeof netSettlementTRY>;
           try {
-            netTRY = netSettlementTRY(
-              settlement.amountTRY,
-              settlement.amountUSDC,
-              result.feeUSDC,
-            );
+            // An adapter that knows what the anchor actually paid out (SEP-6 `amount_out`) wins
+            // over deriving it from the fee — that figure is the money that reached the IBAN.
+            netTRY =
+              result.netTRY ??
+              netSettlementTRY(
+                settlement.amountTRY,
+                settlement.amountUSDC,
+                result.feeUSDC,
+              );
           } catch (err) {
             if (!(err instanceof InvalidFeeError)) throw err;
             // Terminal, not transient: the anchor's reported fee won't change on a retry.
