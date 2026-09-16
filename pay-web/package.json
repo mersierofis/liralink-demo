@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
-    "preview": "vite preview --port 5174"
+    "preview": "vite preview --port 5174",
+    "postinstall": "npm --prefix ../packages/invoice-client ci --no-fund --no-audit && npm --prefix ../packages/invoice-client run build"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^1.9.5",
@@ -20,6 +21,7 @@
     "buffer": "6.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "invoice-client": "file:../packages/invoice-client",
     "lucide-react": "^1.45.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

@@ -10,11 +10,13 @@ import { MerchantHeader } from '@/components/MerchantHeader'
 import { PaidReceipt } from '@/components/PaidReceipt'
 import { PayButton } from '@/components/PayButton'
 import { PayingState } from '@/components/PayingState'
+import { TestnetRequiredCard } from '@/components/TestnetRequiredCard'
 import { WalletButton } from '@/components/WalletButton'
 import { HttpError } from '@/api/client'
 import { payAmountUSDC, usePayQuote, usePayStatus, useSubmitted } from '@/api/hooks'
 import type { PayQuote } from '@/api/types'
 import { buildPaymentXdr, loadUsdcBalance, submitSignedXdr } from '@/stellar/buildPayment'
+import { isContractRailEnabled, payViaContract } from '@/stellar/payViaContract'
 import { useWallet } from '@/stellar/useWallet'
 
 type UiPhase = 'quote' | 'paying' | 'paid'
@@ -45,6 +47,8 @@ export function PayPage() {
   const [phase, setPhase] = useState<UiPhase>('quote')
   const [payError, setPayError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [loadingRail, setLoadingRail] = useState<'memo' | 'contract' | null>(null)
+  const [lastRail, setLastRail] = useState<'memo' | 'contract'>('memo')
   const [pendingTxHash, setPendingTxHash] = useState<string | null>(null)
   const [balances, setBalances] = useState<{
     hasTrustline: boolean
@@ -91,10 +95,14 @@ export function PayPage() {
     }
   }, [wallet.address, quote])
 
-  async function runPay(opts?: { skipWallet?: boolean }) {
+  async function runPay(opts?: { skipWallet?: boolean; rail?: 'memo' | 'contract' }) {
     if (!mergedQuote || !code) return
+    const rail = opts?.rail ?? 'memo'
     setPayError(null)
     setSubmitting(true)
+    setLoadingRail(rail)
+    setLastRail(rail)
+    let alreadySubmitted = false
     try {
       if (opts?.skipWallet || mockPay) {
         const fakeHash = `mock${Date.now().toString(16).padStart(56, '0')}`.slice(0, 64)
@@ -107,19 +115,50 @@ export function PayPage() {
         setPayError('Connect a wallet first.')
         return
       }
-      const xdr = await buildPaymentXdr(mergedQuote, wallet.address)
-      const signed = await wallet.signXdr(xdr)
-      const { hash } = await submitSignedXdr(signed)
-      console.info('[pay-web] submitted Stellar tx', hash)
-      setPendingTxHash(hash)
-      setPhase('paying')
-      void submitted.mutateAsync(hash).catch(() => undefined)
+
+      let hash: string
+      if (rail === 'contract') {
+        const result = await payViaContract({
+          quote: mergedQuote,
+          payer: wallet.address,
+          signXdr: wallet.signXdr,
+          onSubmitted: (txHash) => {
+            alreadySubmitted = true
+            setPendingTxHash(txHash)
+            setPhase('paying')
+            void submitted.mutateAsync(txHash).catch(() => undefined)
+          },
+        })
+        hash = result.hash
+      } else {
+        const xdr = await buildPaymentXdr(mergedQuote, wallet.address)
+        const signed = await wallet.signXdr(xdr)
+        const result = await submitSignedXdr(signed)
+        hash = result.hash
+      }
+
+      if (!alreadySubmitted) {
+        setPendingTxHash(hash)
+        setPhase('paying')
+        void submitted.mutateAsync(hash).catch(() => undefined)
+      }
       void queryClient.invalidateQueries({ queryKey: ['pay', code] })
     } catch (err) {
-      setPhase('quote')
-      setPayError(err instanceof Error ? err.message : 'Payment failed')
+      const msg = err instanceof Error ? err.message : 'Payment failed'
+      // FAILED on-chain still fires onSubmitted; reset UI so we don't poll forever.
+      if (alreadySubmitted && /failed on-chain/i.test(msg)) {
+        setPhase('quote')
+        setPendingTxHash(null)
+        setPayError(msg)
+      } else if (alreadySubmitted) {
+        setPayError(msg)
+      } else {
+        setPhase('quote')
+        setPayError(msg)
+      }
     } finally {
       setSubmitting(false)
+      setLoadingRail(null)
     }
   }
 
@@ -236,9 +275,22 @@ export function PayPage() {
                 onConnect={() => void wallet.connect()}
                 onDisconnect={wallet.disconnect}
               />
-              {wallet.error ? <ErrorState title="Wallet" message={wallet.error} /> : null}
+              {wallet.errorKind === 'mainnet' ? (
+                <TestnetRequiredCard
+                  onRetry={() => {
+                    wallet.clearError()
+                    void wallet.connect()
+                  }}
+                />
+              ) : wallet.error ? (
+                <ErrorState title="Wallet" message={wallet.error} onRetry={() => void wallet.connect()} />
+              ) : null}
               {payError ? (
-                <ErrorState title="Payment failed" message={payError} onRetry={() => void runPay()} />
+                <ErrorState
+                  title="Payment failed"
+                  message={payError}
+                  onRetry={() => void runPay({ rail: lastRail })}
+                />
               ) : null}
               <PayButton
                 amountUSDC={payAmountUSDC(mergedQuote)}
@@ -251,8 +303,14 @@ export function PayPage() {
                       submitting
                 }
                 loading={submitting}
-                hasContractRail={Boolean(mergedQuote.rails.contract)}
-                onPayMemo={() => void runPay({ skipWallet: mockPay })}
+                loadingRail={loadingRail}
+                hasContractRail={
+                  isContractRailEnabled() &&
+                  Boolean(mergedQuote.rails.contract) &&
+                  mergedQuote.status === 'open'
+                }
+                onPayMemo={() => void runPay({ skipWallet: mockPay, rail: 'memo' })}
+                onPayContract={() => void runPay({ rail: 'contract' })}
               />
               {mockPay ? (
                 <p className="text-center text-[11px] text-muted-foreground">
