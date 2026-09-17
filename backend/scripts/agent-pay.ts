@@ -2,11 +2,13 @@
  * agent-pay.ts — pay a LiraLink payment link end-to-end as an "agent", over x402.
  *
  * Usage:
- *   AGENT_SECRET=$(stellar keys secret payer) npm run agent:pay -- --code <LINKCODE> [--api <base>]
+ *   AGENT_SECRET=$(stellar keys secret payer) npm run agent:pay -- --code <LINKCODE> [--api <base>] [--max <usd>]
  *
- * --api defaults to http://localhost:3000/api. The payer needs testnet USDC and a USDC trustline,
- * but no XLM: it signs Soroban auth entries only; the x402.org facilitator builds, pays for and
- * submits the transaction (testnet only).
+ * --api defaults to http://localhost:3000/api. --max is the x402 client's per-payment spend cap in
+ * USD, default 50; @x402/core's own default is $1, which rejects anything larger before signing.
+ *
+ * The payer needs testnet USDC and a USDC trustline, but no XLM: it signs Soroban auth entries
+ * only; the x402.org facilitator builds, pays for and submits the transaction (testnet only).
  *
  * Steps: GET /pay/:code/agent → 402 with payment requirements → @x402/fetch signs and retries with
  * a PAYMENT-SIGNATURE header → 200 with the receipt → poll /pay/:code/status until paid.
@@ -20,10 +22,11 @@ import { createEd25519Signer } from '@x402/stellar';
 import { ExactStellarScheme } from '@x402/stellar/exact/client';
 
 const NETWORK = 'stellar:testnet';
+const DEFAULT_MAX_USD = 50;
 const STATUS_POLL_ATTEMPTS = 30;
 const STATUS_POLL_DELAY_MS = 2_000;
 
-function parseArgs(argv: string[]): { code: string; api: string } {
+function parseArgs(argv: string[]): { code: string; api: string; max: number } {
   const out: Record<string, string> = {};
   for (let i = 0; i < argv.length; i += 2) {
     if (!argv[i].startsWith('--') || argv[i + 1] === undefined) {
@@ -33,17 +36,22 @@ function parseArgs(argv: string[]): { code: string; api: string } {
   }
   if (!out.code) {
     throw new Error(
-      'Usage: AGENT_SECRET=S... npm run agent:pay -- --code <LINKCODE> [--api <base>]',
+      'Usage: AGENT_SECRET=S... npm run agent:pay -- --code <LINKCODE> [--api <base>] [--max <usd>]',
     );
+  }
+  const max = Number(out.max ?? DEFAULT_MAX_USD);
+  if (!Number.isFinite(max) || max <= 0) {
+    throw new Error(`--max must be a positive number of USD, got: ${out.max}`);
   }
   return {
     code: out.code.toUpperCase(),
     api: (out.api ?? 'http://localhost:3000/api').replace(/\/$/, ''),
+    max,
   };
 }
 
 async function main(): Promise<void> {
-  const { code, api } = parseArgs(process.argv.slice(2));
+  const { code, api, max } = parseArgs(process.argv.slice(2));
   const secret = process.env.AGENT_SECRET ?? '';
   if (!/^S[A-Z2-7]{55}$/.test(secret)) {
     throw new Error('AGENT_SECRET is not set to a Stellar secret key (S...)');
@@ -66,9 +74,10 @@ async function main(): Promise<void> {
 
   // 2. Pay: sign the SAC transfer auth entries and retry with PAYMENT-SIGNATURE.
   const signer = createEd25519Signer(secret, NETWORK);
-  console.log(`Paying as ${signer.address} …`);
+  console.log(`Paying as ${signer.address} (cap $${max} per payment) …`);
   const payingFetch = wrapFetchWithPaymentFromConfig(fetch, {
     schemes: [{ network: NETWORK, client: new ExactStellarScheme(signer) }],
+    spendControls: { maxAmountPerPayment: max },
   });
   const started = Date.now();
   const paid = await payingFetch(url);
