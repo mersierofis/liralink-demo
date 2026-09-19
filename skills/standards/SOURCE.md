@@ -11,8 +11,15 @@ as its prerequisites. The adapter was reviewed against those specs directly — 
 `docs/anchor.md` → *Spec review*. SEP-6, SEP-12, SEP-31 and `ecosystem.md` / `resources.md` are
 vendored for completeness but not used.
 
-There is **no `anchors` skill** upstream: `skills/anchors` does not exist at this commit or at
-`main` (202be802, checked 2026-09-15) and has no history. Anchor guidance lives in this skill.
+There is no `anchors` skill **in this repo**: `skills/anchors` does not exist at this commit or at
+`main` (202be802, checked 2026-09-15) and has no history.
+
+**Corrected 2026-09-19:** we first read that as "no anchors skill exists". It does — as a
+*community* skill, in its own repo (`CheesecakeLabs/stellar-anchor-skill`), listed on
+https://skills.stellar.org/ and now vendored at `skills/anchors`. Only the eight *official* skills
+live in `stellar/stellar-dev-skill`; every community skill has its own repo and the directory page
+is the only index. The anchors skill is the implementation layer to this one's spec pointers — see
+`skills/anchors/SOURCE.md`.
 
 Relative links to `../smart-contracts/`, `../assets/`, `../dapp/` etc. point at sibling skills that
 are not vendored here.
