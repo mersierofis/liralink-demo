@@ -13,8 +13,8 @@ import { CopyButton } from '@/components/CopyButton'
 import { ExplorerLink } from '@/components/ExplorerLink'
 import { ErrorState } from '@/components/ErrorState'
 import { EmptyState } from '@/components/EmptyState'
-import { SettlementTimeline } from '@/components/SettlementTimeline'
-import { useLink, useSimulatePayment } from '@/api/hooks'
+import { SettlementStatusBadge } from '@/components/SettlementStatusBadge'
+import { useLink, usePayments, useSimulatePayment } from '@/api/hooks'
 import { HttpError } from '@/api/client'
 import { formatTRY, formatUSDC, formatUSDCFull } from '@/lib/money'
 import { formatDateTime, shortAddress } from '@/lib/format'
@@ -33,6 +33,12 @@ export default function LinkDetailPage() {
 
   const simulatePayment = useSimulatePayment()
   const isMock = import.meta.env.VITE_USE_MOCK === 'true'
+
+  // No GET /settlements-for-link endpoint exists — pull it from the merchant's payments list
+  // (PaymentListItem.settlement) and filter client-side, same pattern Dashboard's "this week"
+  // stats use for links. Fine at hackathon scale; would need a real filter at real volume.
+  const paymentsQuery = usePayments({ limit: 100 })
+  const settledPayments = (paymentsQuery.data?.items ?? []).filter((p) => p.linkId === id)
 
   const prevStatus = useRef<LinkStatus | undefined>(undefined)
 
@@ -206,10 +212,26 @@ export default function LinkDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle>Settlement</CardTitle>
-          <CardDescription>USDC → TRY conversion status for this link's payment.</CardDescription>
+          <CardDescription>USDC → TRY conversion status for each payment on this link.</CardDescription>
         </CardHeader>
-        <CardContent>
-          <SettlementTimeline hasPayment={link.payments.length > 0} />
+        <CardContent className="space-y-3">
+          {paymentsQuery.isLoading && <Skeleton className="h-9 w-40" />}
+          {!paymentsQuery.isLoading && link.payments.length === 0 && (
+            <p className="text-sm text-muted-foreground">No payments yet — nothing to settle.</p>
+          )}
+          {!paymentsQuery.isLoading &&
+            link.payments.length > 0 &&
+            settledPayments.map((payment) => (
+              <div key={payment.id} className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm text-muted-foreground">{formatUSDC(payment.amountUSDC)}</span>
+                <SettlementStatusBadge payment={payment} />
+              </div>
+            ))}
+          {!paymentsQuery.isLoading && link.payments.length > 0 && settledPayments.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Settlement details aren't in the most recent 100 payments — check the Payments page.
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>

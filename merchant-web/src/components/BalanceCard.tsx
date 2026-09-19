@@ -1,7 +1,10 @@
+import { useState } from 'react'
 import { Decimal } from 'decimal.js'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
+import { UnallocatedSheet } from '@/components/UnallocatedSheet'
 import { formatTRY, formatUSDC, formatUSDCFull } from '@/lib/money'
 import type { Balance, SettlementMode } from '@/api/types'
 
@@ -14,6 +17,8 @@ export function BalanceCard({
   isLoading: boolean
   settlementMode: SettlementMode | undefined
 }) {
+  const [unallocatedOpen, setUnallocatedOpen] = useState(false)
+
   if (isLoading || !balance) {
     return (
       <Card>
@@ -67,9 +72,13 @@ export function BalanceCard({
             <p className="font-medium" title={formatUSDCFull(balance.unallocatedUSDC)}>
               {formatUSDC(balance.unallocatedUSDC)}
             </p>
+            <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setUnallocatedOpen(true)}>
+              View details
+            </Button>
           </div>
         )}
       </CardContent>
+      <UnallocatedSheet open={unallocatedOpen} onOpenChange={setUnallocatedOpen} />
     </Card>
   )
 }

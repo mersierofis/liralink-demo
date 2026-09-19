@@ -1,7 +1,17 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query'
 
 import { apiRequest } from './client'
-import type { AuthResult, Balance, LinkStatus, Merchant, Paginated, PaymentLink, PaymentListItem, Withdrawal } from './types'
+import type {
+  AuthResult,
+  Balance,
+  LinkStatus,
+  Merchant,
+  Paginated,
+  PaymentLink,
+  PaymentListItem,
+  UnallocatedList,
+  Withdrawal,
+} from './types'
 
 export function useMe(enabled: boolean) {
   return useQuery({
@@ -166,5 +176,16 @@ export function useRetryOnchain() {
       queryClient.setQueryData(['links', link.id], link)
       queryClient.invalidateQueries({ queryKey: ['links'] })
     },
+  })
+}
+
+/** GET /unallocated — the credits behind Balance.unallocatedUSDC, newest first, plus a `summary`
+ * computed over ALL pages (04-BACKEND-HANDOFF.md §2). `limit` ≤ 100. Only fetched while enabled
+ * (the drawer is open). */
+export function useUnallocated(page: number, limit: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ['unallocated', page, limit],
+    queryFn: () => apiRequest<UnallocatedList>(`/unallocated?page=${page}&limit=${limit}`),
+    enabled,
   })
 }
