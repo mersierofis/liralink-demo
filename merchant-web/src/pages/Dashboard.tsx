@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/EmptyState'
 import { ErrorState } from '@/components/ErrorState'
 import { CreateLinkDialog } from '@/components/CreateLinkDialog'
 import { LinkCreatedDialog } from '@/components/LinkCreatedDialog'
+import { VerificationBanner } from '@/components/VerificationBanner'
 import { useAuth } from '@/auth/AuthProvider'
 import { useBalance, useLinks, usePayments } from '@/api/hooks'
 import { HttpError } from '@/api/client'
@@ -39,6 +40,8 @@ export default function DashboardPage() {
         </div>
         <CreateLinkDialog onCreated={setCreatedLink} />
       </div>
+
+      <VerificationBanner />
 
       <div className="grid gap-4 md:grid-cols-3">
         <div className="md:col-span-2">
