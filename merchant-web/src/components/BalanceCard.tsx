@@ -2,6 +2,7 @@ import { Decimal } from 'decimal.js'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { SendToWalletButton } from '@/components/SendToWalletButton'
 import { formatTRY, formatUSDC, formatUSDCFull } from '@/lib/money'
 import type { Balance, SettlementMode } from '@/api/types'
 
@@ -58,7 +59,8 @@ export function BalanceCard({
             <p className="font-medium" title={formatUSDCFull(balance.savedUSDC)}>
               {formatUSDC(balance.savedUSDC)}
             </p>
-            <p className="text-xs text-muted-foreground">Held by LiraLink until you request a transfer</p>
+            <p className="text-xs text-muted-foreground">Held by LiraLink — send it to your own wallet any time.</p>
+            <SendToWalletButton source="saved" available={balance.savedUSDC} />
           </div>
         )}
         {unallocatedUSDC.gt(0) && (
@@ -67,6 +69,7 @@ export function BalanceCard({
             <p className="font-medium" title={formatUSDCFull(balance.unallocatedUSDC)}>
               {formatUSDC(balance.unallocatedUSDC)}
             </p>
+            <SendToWalletButton source="unallocated" available={balance.unallocatedUSDC} />
           </div>
         )}
       </CardContent>

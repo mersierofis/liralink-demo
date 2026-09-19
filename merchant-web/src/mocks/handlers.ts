@@ -167,6 +167,12 @@ export const handlers: HttpHandler[] = [
     return HttpResponse.json({ items, total: items.length })
   }),
 
+  http.get('*/api/usdc-withdrawals', ({ request }) => {
+    const authError = requireAuth(request)
+    if (authError) return authError
+    return HttpResponse.json({ items: [], total: 0 })
+  }),
+
   http.get('*/api/withdrawals', ({ request }) => {
     const authError = requireAuth(request)
     if (authError) return authError
