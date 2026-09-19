@@ -100,7 +100,7 @@ export default function WithdrawalsPage() {
         </div>
       )}
 
-      <UsdcWithdrawalsList />
+      <UsdcWithdrawalsList balance={balance.data} />
     </div>
   )
 }
