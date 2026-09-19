@@ -57,12 +57,25 @@ The live demo still runs the `mock` adapter (same interface); flipping it to `se
 
 ## Stellar skills used
 
+Four published skills, vendored unmodified under `skills/` with a `SOURCE.md` recording the URL,
+commit and fetch date. Each one below is a skill we actually followed — what it gave us, and where
+the result is checked.
+
+| Skill | Path | How we used it |
+|---|---|---|
+| **Anchors** (community, Cheesecake Labs) | [`skills/anchors/SKILL.md`](skills/anchors/SKILL.md) | The implementation checklist for the SEP-6 TRY rail. We audited the adapter against all 13 of its gotchas plus `references/client/sep6-programmatic.md`; the result is [docs/anchor.md → Skill review](docs/anchor.md) and the 8 deviations are filed as [#38–#43](https://github.com/mersierofis/liralink-demo/issues/38). |
+| **SEPs, CAPs & Ecosystem** (official) | [`skills/standards/SKILL.md`](skills/standards/SKILL.md) | Its anchor section routed us to SEP-24 with SEP-1 + SEP-10 as prerequisites; the adapter was then reviewed line by line against those specs in [docs/anchor.md → Spec review](docs/anchor.md). |
+| **Agent Payments — x402 + MPP** (official) | [`skills/agentic-payments/SKILL.md`](skills/agentic-payments/SKILL.md) | The x402 seller and buyer halves behind `GET /pay/:code/agent`. We swapped its OZ Channels facilitator for the keyless x402.org one; reviewed in [docs/hackathon-notes.md](docs/hackathon-notes.md#skill-reviews--standards--agentic-payments-2026-09-19). |
+| **TR Mock Anchor** (hackathon) | [`skills/anchor-tr/SKILL.md`](skills/anchor-tr/SKILL.md) | The integration guide for `tr-mock-anchor.fly.dev`: endpoint layout, treasury address, the `Memo.id` requirement and SEP-38 asset ids. Its `SOURCE.md` records where the running anchor disagrees with it. |
+
+The **Anchors** skill is a community skill in its own repo, not part of `stellar/stellar-dev-skill`
+— see [`skills/anchors/SOURCE.md`](skills/anchors/SOURCE.md).
+
+### Stellar platform features used
+
 - **Classic payments + text memos, USDC trustlines, Horizon streaming:** the core memo rail and the payment listener (cursor-persisted, idempotent per operation).
 - **Soroban smart contract (Rust, soroban-sdk):** `contracts/invoice` with admin-auth `create`/`cancel`, payer-auth `pay` through the **USDC Stellar Asset Contract**, RPC `getEvents` polling, and TS bindings in `packages/invoice-client`.
-- **SEP-1 / SEP-10 / SEP-6 / SEP-24 / SEP-38:** anchor discovery, web auth with challenge verification, programmatic and interactive withdraws, and rate quotes — all in `backend/src/anchor`, sharing one `AnchorSession`.
-- **TR Mock Anchor skill:** [`skills/anchor-tr`](skills/anchor-tr/SOURCE.md) — the hackathon's official `SKILL.md` for `tr-mock-anchor.fly.dev`, vendored unmodified. It is the source for the SEP-6 adapter (endpoint layout, treasury address, the `Memo.id` requirement, SEP-38 asset ids); `SOURCE.md` records where the running anchor disagrees with it.
-- **Stellar standards skill:** [`skills/standards`](skills/standards/SOURCE.md). Its anchor section pointed us to SEP-1/10/24 (SEP-12 not used), and the adapter is checked against those specs in [docs/anchor.md → Spec review](docs/anchor.md). Upstream has no separate anchors skill.
-- **x402 agentic payments:** from the official Stellar skill [`skills/agentic-payments`](skills/agentic-payments/SOURCE.md), vendored unmodified from `stellar/stellar-dev-skill`.
+- **SEP-1 / SEP-10 / SEP-6 / SEP-12 / SEP-24 / SEP-38:** anchor discovery, web auth with challenge verification, KYC registration, programmatic and interactive withdraws, and rate quotes — all in `backend/src/anchor`, sharing one `AnchorSession`.
 - **Stellar Wallets Kit / Freighter:** the payer connects and signs in pay-web.
 
 Contract ID, wasm hash and deploy txs: **[docs/deployments.md](docs/deployments.md)** (`CDKZYQI4…45EJ`, testnet).

@@ -124,3 +124,60 @@ Router and token contract IDs are placeholders upstream; real testnet IDs would 
 **5. Soroban `persistent` storage TTL — flagged upstream, already handled here.** The page warns that `persistent` storage has its own TTL and expires if it is not extended. Checked against our contract: `contracts/invoice` already bumps TTLs (each invoice is extended to `deadline` + 30 days, instance TTL to 30 days on every write) — see [`deployments.md`](deployments.md) → *Storage TTL*. No action needed; recorded so the warning is not re-raised.
 
 **6. Wallet SDK is a possible future simplification, not a task.** See the Wallet SDK section above.
+
+## Skill reviews — standards & agentic-payments (2026-09-19)
+
+Both skills are vendored ([`skills/standards`](../skills/standards/SOURCE.md),
+[`skills/agentic-payments`](../skills/agentic-payments/SOURCE.md)) at
+`stellar/stellar-dev-skill@1f57ed1a`. The anchors skill has its own, much longer review in
+[`anchor.md`](anchor.md) → *Skill review*. `[x]` = conforms, `[ ]` = deviation.
+
+### SEPs, CAPs & Ecosystem (`skills/standards`)
+
+This skill routes you to specs rather than prescribing code, so "conformance" means we followed
+where it pointed. The line-by-line result is [`anchor.md`](anchor.md) → *Spec review*.
+
+- [x] Its anchor section routed us to SEP-24 with SEP-1 + SEP-10 as prerequisites; all three were
+      then reviewed against the spec text and the fixes it produced are recorded there.
+- [x] SEP-38 (`FX_PROVIDER=anchor`) and SEP-6 (the live TRY rail) were adopted later, from the
+      hackathon anchor's own skill ([`skills/anchor-tr`](../skills/anchor-tr/SOURCE.md)).
+- [ ] **Correction to our own note.** `skills/standards/SOURCE.md` said "there is **no** `anchors`
+      skill upstream". That is true of `stellar/stellar-dev-skill` and false of the ecosystem: the
+      directory at [skills.stellar.org](https://skills.stellar.org/) lists **Anchors** under
+      *Community*, in a Cheesecake Labs repo. Community skills each live in their own repo and the
+      directory page is the only index — there is no JSON manifest. Now vendored at
+      [`skills/anchors`](../skills/anchors/SOURCE.md); `standards/SOURCE.md` has been corrected.
+- `ecosystem.md` and `resources.md` remain unused.
+
+### Agent Payments — x402 (`skills/agentic-payments`)
+
+Checked `backend/src/pay/x402.service.ts` against `x402.md` → *Key concepts* and *Common pitfalls*.
+This rail came out clean; the pitfalls list reads like a changelog of things we already avoid.
+
+- [x] **7-decimal USDC.** `USDC_UNITS = 10_000_000` (`x402.service.ts:58`) — the skill's top
+      precision pitfall is EVM's 6 decimals leaking in. Base units are built with `Decimal`, never
+      float math.
+- [x] **CAIP-2 network id** is the exact string `stellar:testnet` (`x402.service.ts:55`).
+- [x] **`exact-v2`**: `scheme: 'exact'` with `ExactStellarScheme` from `@x402/stellar/exact/server`.
+- [x] **No v1/v2 package mismatch**: `@x402/core`, `@x402/fetch` and `@x402/stellar` are all pinned
+      to `2.25.0`.
+- [x] **Ledger expiration**: `maxTimeoutSeconds: 60`, matching the skill's `latestLedger + 12`
+      (~1 min) auth-entry bound rather than advertising a window the entries outlive.
+- [x] **Recipient trustline**: `payTo` is the platform custody account, which holds USDC — the
+      skill's `op_no_trust`-on-the-recipient pitfall.
+- [x] **No `createEd25519Signer` footguns**: the seller half never constructs a signer; the buyer
+      is `backend/scripts/agent-pay.ts`, which passes the raw `S…` secret and the CAIP-2 id, not a
+      `Keypair` or a passphrase.
+- [x] **No OZ Channels 401**: the x402.org facilitator is keyless, so the skill's most common
+      seller startup failure cannot occur.
+- [ ] **Facilitator** is `https://x402.org/facilitator`, not the OZ Channels endpoint the guide
+      configures. Deliberate and already recorded in
+      [`agentic-payments/SOURCE.md`](../skills/agentic-payments/SOURCE.md): testnet-only, no API
+      key. It also pins us to testnet — x402.org advertises no `stellar:pubnet` entry, so a mainnet
+      move means OZ Channels and a key.
+- [ ] **Seller shape.** The skill monetizes an Express app with `paymentMiddleware` /
+      `paymentMiddlewareFromConfig`; we drive `x402ResourceServer` directly from a Nest controller
+      (`GET /pay/:code/agent`). The middleware assumes one static price per route, and our price is
+      per-link and shrinks as a link is topped up, so the 402 has to be built per request. The
+      verify → settle → receipt sequence is the skill's; only the framing differs.
+- Not used: MPP (`mpp.md`) — no agent-to-agent discovery in LiraLink.

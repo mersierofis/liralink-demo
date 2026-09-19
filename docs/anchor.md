@@ -306,7 +306,46 @@ v3.4.1, SEP-24 v3.8.0. `[x]` = conforms or fixed in this review, `[ ]` = open de
 - [ ] `pending_user`, `on_hold`, `more_info_url`, `user_action_required_by` are not shown to the merchant → [#22](https://github.com/mersierofis/liralink-demo/issues/22).
 - [ ] `refunds` ignored: partial refunds are not netted, refunded USDC is not credited back → [#24](https://github.com/mersierofis/liralink-demo/issues/24).
 - [ ] KYC re-open: the interactive URL token is short-lived and a stale withdraw is never re-opened → [#10](https://github.com/mersierofis/liralink-demo/issues/10) (`user_action_required_by`, #22, gives the deadline).
-- Not used *by this adapter*: SEP-12 (the anchor collects KYC on its own interactive page) and claimable balances (deposit-only). SEP-6 and SEP-38 are now used — by the `sep6` adapter and by `FX_PROVIDER=anchor` respectively; they have not had a line-by-line spec review of their own, and the SEP-6 flow is documented from the spec plus what the anchor actually does (*Observed*).
+- Not used *by this adapter*: SEP-12 (the anchor collects KYC on its own interactive page) and claimable balances (deposit-only). SEP-6 and SEP-38 are now used — by the `sep6` adapter and by `FX_PROVIDER=anchor` respectively; the SEP-6 flow is documented from the spec plus what the anchor actually does (*Observed*). SEP-6 and SEP-12 have since been reviewed against the anchors skill — see *Skill review* below.
+
+## Skill review — anchors skill (2026-09-19)
+
+Basis: the **Anchors** skill from [skills.stellar.org](https://skills.stellar.org/), vendored at
+[`skills/anchors`](../skills/anchors/SOURCE.md) — `CheesecakeLabs/stellar-anchor-skill@be34740f`.
+It is a *community* skill, not an SDF one, which is why the earlier sweep of
+`stellar/stellar-dev-skill` concluded no anchors skill existed (`skills/standards/SOURCE.md`).
+Unlike `skills/standards`, which points at spec text, this one is the implementation layer: 13
+"Gotchas" plus a per-SEP reference tree. It is the first source we have that covers **SEP-6 and
+SEP-12 directly**, which the 2026-09-15 review above explicitly left unexamined.
+
+Checked against the live rail (`ANCHOR_PROVIDER=sep6`, `tr-mock-anchor.fly.dev`).
+`[x]` = conforms, `[ ]` = open deviation. Gotcha numbers are the skill's own.
+
+**Already conforming — no change needed**
+
+- [x] #1 The SEP-10 challenge is signed locally and POSTed back, never submitted to the network (`anchor-session.ts:174`).
+- [x] #2 `home_domain` and `web_auth_domain` are passed as separate arguments to `readChallengeTx` (`anchor-session.ts:162`), the second derived from the `WEB_AUTH_ENDPOINT` host, not the TOML host.
+- [x] #4 The withdraw payment carries `withdraw_memo` typed by `withdraw_memo_type` to `withdraw_anchor_account`; `withdrawMemo` handles `id` / `text` / `hash` and **throws** on an unknown type rather than sending a memo-less payment to a shared custodial account (`transfer.ts:114`). This is the gotcha most likely to strand funds, and it is the one we are strictest about.
+- [x] #6 Amounts are `Decimal` end to end, never `parseFloat`; `amount_in` is compared decimally before any USDC moves (`withdraw-payment.ts:66`).
+- [x] #7 Asset identity uses the full `stellar:CODE:ISSUER` form wherever money is netted (`sep6.ts:69`, `fx.service.ts:155`) — but see #43 for the one place it is not.
+- [x] #9 Not applicable *as written*: we never hold a firm quote, so no quote can expire. The reason that is itself a deviation is #42 below.
+- [x] #12 `/info` is read unauthenticated before anything is opened, and `enabled` / `min_amount` / `max_amount` become a `blockedReason` (`transfer.ts:86`). We additionally treat an amount-shaped 4xx on `/withdraw` as a block, because this anchor enforces stricter limits than it advertises (*Observed vs documented*).
+- [x] #13 `SIGNING_KEY` is resolved once from `stellar.toml` and cached in one place (`anchor-session.ts:103`); a rotation drops the cached JWTs. No second load path exists — we register no URL callbacks.
+- [x] #3, #5, #10 (server half), #13 (callback half) do not apply: SEP-6 has no interactive page to open in a popup, withdrawals need no trustline on our side, and we run no anchor and receive no callbacks.
+
+**Open deviations**
+
+- [ ] #8 `pending_customer_info_update` and `pending_transaction_info_update` — the two SEP-6-only statuses — fall through `transferPhase` into `in_progress`, so the settlement polls until the anchor expires it. No `PATCH /transactions/{id}` exists. Unreachable on `tr-mock-anchor` (KYC is auto-approved); a real-anchor blocker → [#38](https://github.com/mersierofis/liralink-demo/issues/38).
+- [ ] The payout IBAN is sent as `?dest=` — PII in a query string, deprecated by the spec — while `customer_id` is never passed, though we hold `sep12CustomerId`. The anchor's `/info` advertises `types.bank_account.fields: {}`, so it never asked for `dest` → [#39](https://github.com/mersierofis/liralink-demo/issues/39).
+- [ ] `/info` `fields` / `types.*.fields` are not modelled at all (`AnchorInfo`, `transfer.ts:13`), so an anchor that requires a field we do not send gets a 400 or a stall instead of a clean block → [#39](https://github.com/mersierofis/liralink-demo/issues/39).
+- [ ] SEP-12 first registration never re-reads `GET /customer`, so `NEEDS_INFO` / `PROCESSING` is indistinguishable from `ACCEPTED` and the withdraw opens against an uncleared customer → [#40](https://github.com/mersierofis/liralink-demo/issues/40).
+- [ ] #11 A mid-flow 401 evicts the cached JWT but still fails the call; the skill wants a transparent re-auth **and retry**. We always recover on the next minute-job pass, and `FxService.price` already hand-rolls the retry → [#41](https://github.com/mersierofis/liralink-demo/issues/41).
+- [ ] USDC → TRY is a non-equivalent asset pair, so the spec path is `/withdraw-exchange` with a firm SEP-38 `quote_id`; we use plain `/withdraw` and an indicative `/price`. The anchor advertises `withdraw-exchange` as enabled → [#42](https://github.com/mersierofis/liralink-demo/issues/42). This is the *Known gaps* entry "SEP-6 rates are indicative, not locked" with a spec citation and an endpoint attached.
+- [ ] #10 (client half) Endpoints read out of `stellar.toml` are not checked for `https://` → [#43](https://github.com/mersierofis/liralink-demo/issues/43).
+- [ ] #7 `asset_issuer` is not sent alongside `asset_code` on `/withdraw` → [#43](https://github.com/mersierofis/liralink-demo/issues/43).
+
+Nothing here was fixed in this pass: every deviation is runtime code on the live TRY rail, and the
+backend is frozen for the 19th. Docs and the vendored skill are the only changes.
 
 ## Known gaps / open decisions
 
@@ -331,7 +370,9 @@ v3.4.1, SEP-24 v3.8.0. `[x]` = conforms or fixed in this review, `[ ]` = open de
   withdrawal — so the anchor re-prices at settlement time. A link paid hours later settles at the
   rate of that moment, and `netTRY` can differ from the link's `amountTRY`. Holding a firm quote
   would mean `withdraw-exchange` plus expiry handling (quotes live ~15 min, links up to 24 h),
-  which is not built.
+  which is not built. The anchors skill names `/withdraw-exchange` + a firm `quote_id` as the
+  spec path for a non-equivalent pair, and this anchor advertises it →
+  [#42](https://github.com/mersierofis/liralink-demo/issues/42).
 - **The SEP-6 payout is simulated.** tr-mock-anchor routes the lira to the merchant's registered
   IBAN, but no bank is credited — `paidOutTRY` means "the anchor says it paid". A wrong `to` on a
   completed withdrawal is logged at ERROR, not failed (the money already moved).
