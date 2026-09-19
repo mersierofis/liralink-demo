@@ -1,6 +1,11 @@
 import { ConfigService } from '@nestjs/config';
 import { Keypair, StellarToml, WebAuth } from '@stellar/stellar-sdk';
-import { AnchorEndpoints, AnchorSession } from './anchor-session';
+import {
+  AnchorEndpoints,
+  AnchorHttpError,
+  AnchorSession,
+  redactIbans,
+} from './anchor-session';
 
 const PASSPHRASE = 'Test SDF Network ; September 2015';
 const HOME = 'testanchor.stellar.org';
@@ -277,5 +282,70 @@ describe('AnchorSession — per-merchant SEP-10 identity (memo)', () => {
     );
     // Only the challenge GET — nothing was signed and posted.
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** #39: an anchor echoes what we send it, and SEP-12 sends the merchant's bank account number. */
+describe('redactIbans', () => {
+  const IBAN = 'TR330006100519786457841326';
+
+  it('redacts an IBAN an anchor echoed back', () => {
+    expect(redactIbans(`invalid bank_account_number: ${IBAN}`)).toBe(
+      'invalid bank_account_number: [redacted-iban]',
+    );
+  });
+
+  it('redacts every occurrence, and other countries too', () => {
+    expect(redactIbans(`${IBAN} and DE89370400440532013000 and ${IBAN}`)).toBe(
+      '[redacted-iban] and [redacted-iban] and [redacted-iban]',
+    );
+  });
+
+  it.each([
+    ['account id', 'GBRZSG7K6ZXJRCMYM2O2HO2DKR7RO2ACZ5FARBMQZBB4YZMDFDXFUTV7'],
+    ['contract id', 'CDKZYQI4NWBZB5DDAHFP6RXHFHFHBQEBXPL43PWJRTGNCFJ4Q6Z745EJ'],
+    ['tx hash', 'a3f1c0de'.repeat(8)],
+    [
+      'asset id',
+      'stellar:USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    ],
+  ])('leaves a Stellar %s alone', (_what, value) => {
+    expect(redactIbans(`anchor said ${value} is wrong`)).toContain(value);
+  });
+
+  it('leaves text with no IBAN untouched', () => {
+    const body = 'Minimum off-ramp is 1.0000000 USDC';
+    expect(redactIbans(body)).toBe(body);
+  });
+});
+
+/** The redaction is applied once, at the error boundary, so no caller has to remember. */
+describe('AnchorHttpError', () => {
+  const IBAN = 'TR330006100519786457841326';
+
+  it('redacts the IBAN from both the body and the message', () => {
+    const err = new AnchorHttpError(
+      400,
+      `{"error":"bad IBAN ${IBAN}"}`,
+      `PUT /sep12/customer \u2192 400: {"error":"bad IBAN ${IBAN}"}`,
+    );
+    expect(err.body).not.toContain(IBAN);
+    expect(err.message).not.toContain(IBAN);
+    expect(err.body).toContain('[redacted-iban]');
+    expect(err.message).toContain('[redacted-iban]');
+    // Everything a human needs to act on survives.
+    expect(err.status).toBe(400);
+    expect(err.message).toContain('PUT /sep12/customer');
+  });
+
+  it('keeps the words the amount-rejection check greps for', () => {
+    const err = new AnchorHttpError(
+      400,
+      '{"error":"Minimum off-ramp is 1.0000000 USDC"}',
+      'GET /sep6/withdraw \u2192 400',
+    );
+    expect(/minimum|maximum|amount|limit|small|large/i.test(err.body)).toBe(
+      true,
+    );
   });
 });
