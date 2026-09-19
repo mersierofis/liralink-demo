@@ -198,7 +198,11 @@ export class Sep6AnchorAdapter implements AnchorAdapter {
       funding_method: 'bank_account',
       amount: state.amountUSDC.toFixed(7),
       account: this.session.account(),
-      dest: merchant.iban,
+      // No `dest`: the spec deprecates it for PII (it lands in the anchor's logs and in any proxy
+      // between us), this anchor's /info advertises `types.bank_account.fields: {}` so it never
+      // asked for it, and `ensureCustomer` has just registered the same IBAN over SEP-12 against
+      // this merchant's own anchor user — which is how the anchor resolves the payout account.
+      // Issue #39.
     });
     let res: Sep6WithdrawResponse;
     try {

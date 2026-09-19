@@ -9,14 +9,39 @@ const TOML_TTL_MS = 60 * 60_000;
 
 export type FormEncoding = 'multipart' | 'urlencoded';
 
-/** A non-2xx anchor response; `status` tells a rejected request from a transient failure. */
+/**
+ * An IBAN-shaped token: two letters, two check digits, then 11-30 alphanumerics. Anchors echo what
+ * we send them, and a SEP-12 registration carries the merchant's bank account number — so a 400
+ * from the anchor can hand the IBAN straight to our logs and to `blockedReason` details (#39).
+ *
+ * The trailing `\b` is what keeps Stellar identifiers out of it: an account or contract id is 56
+ * unbroken alphanumerics, so no word boundary falls inside the 15-34 characters this can match.
+ * Lowercase tx hashes never match either. Spaced IBANs are out of scope — ours are stored
+ * unspaced (`^TR\d{24}$`) and the anchor only ever echoes what we sent.
+ */
+const IBAN_LIKE = /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/g;
+
+/** Redacts IBAN-shaped tokens from anchor-supplied text. */
+export function redactIbans(text: string): string {
+  return text.replace(IBAN_LIKE, '[redacted-iban]');
+}
+
+/**
+ * A non-2xx anchor response; `status` tells a rejected request from a transient failure.
+ *
+ * `body` is redacted on the way in, so every downstream use — the message, the `detail` on a
+ * blocked settlement, any log line — is clean without each caller having to remember.
+ */
 export class AnchorHttpError extends Error {
+  readonly body: string;
+
   constructor(
     readonly status: number,
-    readonly body: string,
+    body: string,
     message: string,
   ) {
-    super(message);
+    super(redactIbans(message));
+    this.body = redactIbans(body);
   }
 }
 

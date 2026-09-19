@@ -162,10 +162,13 @@ describe('Sep6AnchorAdapter — opening the withdraw', () => {
       asset_code: 'USDC',
       funding_method: 'bank_account',
       amount: '1.0328382',
-      dest: IBAN,
     });
     // `type` is deprecated in SEP-6 — never sent.
     expect(query.has('type')).toBe(false);
+    // #39: the IBAN is registered over SEP-12, never put in the query string. Asserted on the
+    // whole URL, not just `dest`, so no future parameter can smuggle it back in.
+    expect(query.has('dest')).toBe(false);
+    expect(url).not.toContain(IBAN);
     expect(query.get('account')).toMatch(/^G[A-Z2-7]{55}$/);
     expect(init.headers).toEqual({ authorization: `Bearer jwt-${MEMO}` });
     // The memo is saved with the ref — the anchor only shows this transaction to that user.
