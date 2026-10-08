@@ -26,6 +26,7 @@
     "test:e2e": "npm run test:e2e:migrate && cross-env NODE_OPTIONS=--experimental-vm-modules jest --config ./test/jest-e2e.json --forceExit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",
