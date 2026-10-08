@@ -2,14 +2,14 @@
 
 A Turkish merchant or exporter creates a **payment link** priced in Turkish lira. A customer **abroad** opens it on their phone and pays in **USDC on Stellar** from their own wallet. LiraLink detects the on-chain payment within seconds, converts it to lira through a **Stellar anchor (SEP-6 or SEP-24)**, and the merchant sees a **TRY balance** paid out to their IBAN. The merchant never touches crypto: they sell in lira and receive lira. Built for Rise In × Stellar Pro (Istanbul, 19–20 Sept 2026) by team MersiErOfis. **Testnet only.**
 
-## Live
+## Running it
 
-| | URL |
-|---|---|
-| Merchant panel | https://merchant-web.tutorialplatform.com |
-| Payer page | https://pay-web.tutorialplatform.com |
-| API docs (Swagger) | https://liralink-api.tutorialplatform.com/docs |
-| API health | https://liralink-api.tutorialplatform.com/api/health |
+The hosted demo server has been shut down. The whole stack (Postgres, API, merchant panel, payer page) runs locally against Stellar testnet. See [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md).
+
+Demo videos:
+
+- Ep 1: https://youtu.be/zz3Qc1Fh7Fs
+- Ep 2: https://youtu.be/L6u9Yq2Zx3w
 
 ## Architecture
 
@@ -39,7 +39,7 @@ The same link can be paid three ways. Each row is a real testnet payment to a li
 
 Amounts are locked at link creation (exact-amount policy): underpayments keep the link open for a top-up, and any excess is parked as `unallocatedUSDC`, never silently converted.
 The memo rail is the wallet-friendly default. x402 is **experimental**: it runs on Stellar testnet only, through the x402.org facilitator operated by Coinbase, which we don't control. Try it from `backend/`:
-`AGENT_SECRET=$(stellar keys secret payer) npm run agent:pay -- --code <CODE> --api https://liralink-api.tutorialplatform.com/api`.
+`AGENT_SECRET=$(stellar keys secret payer) npm run agent:pay -- --code <CODE> --api http://localhost:3000/api`.
 
 ## Anchor integration
 
@@ -79,6 +79,26 @@ The **Anchors** skill is a community skill in its own repo, not part of `stellar
 - **Stellar Wallets Kit / Freighter:** the payer connects and signs in pay-web.
 
 Contract ID, wasm hash and deploy txs: **[docs/deployments.md](docs/deployments.md)** (`CDKZYQI4…45EJ`, testnet).
+
+## LiraLink Agent (Week 1: read-only)
+
+A command-line assistant for merchants, built on the Claude API. It answers questions in plain language using three read-only tools against the local API:
+
+- `get_fx_quote`: convert a TRY amount to USDC at the current rate (`GET /api/fx`)
+- `get_payment_link`: look up one payment link by code (status, amounts, rail)
+- `list_payment_links`: list the merchant's links by status
+
+It cannot create or change links or move money; it says so and points to the merchant panel. Amounts and statuses always come from tool results, never from the model.
+
+```bash
+make dev                # start the local stack
+cd backend
+node --env-file=.env scripts/agent.mjs
+```
+
+`backend/.env` needs `ANTHROPIC_API_KEY` and `LLM_MODEL`.
+
+Code: [`backend/scripts/agent.mjs`](backend/scripts/agent.mjs), behaviour rules: [`backend/scripts/system-prompt.md`](backend/scripts/system-prompt.md), what we tried and decided: [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 
 ## Regulatory note
 
