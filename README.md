@@ -53,7 +53,7 @@ USDC → TRY settlement is an anchor **withdraw** per paid link, in two flavours
   - **Verified live:** an e2e settles ~1 real testnet USDC to `completed`, paid to the merchant's IBAN with a FAST bank reference.
 - **SEP-24 — `ANCHOR_PROVIDER=sep24`, the interactive rail.** Against SDF's `testanchor.stellar.org` (USD out). The settlement stays `processing` and exposes the anchor's `interactiveUrl`; the merchant panel shows a "Complete verification" button, the person fills in KYC and bank details on the anchor's own page, and the backend picks it up within a minute. Nothing is ever marked failed while the anchor waits. A live e2e settles 1 testnet USDC, and a manual e2e walks the browser KYC path.
 
-The live demo still runs the `mock` adapter (same interface); flipping it to `sep6` is a one-line `.env` change, checklisted in [docs/anchor.md](docs/anchor.md).
+The local demo runs the `mock` adapter (same interface); flipping it to `sep6` is a one-line `.env` change, checklisted in [docs/anchor.md](docs/anchor.md).
 
 ## Stellar skills used
 
