@@ -88,3 +88,15 @@ it authenticates over SEP-10 and sends the USDC.
 
 Nothing here is under our control: the operator can reset or retire this anchor at any time, and
 it is testnet-only. Flow, limits and the observed quirks: [`anchor.md`](anchor.md) → *SEP-6*.
+
+## Local development contract — testnet
+
+The original contract above lost its admin key when the EC2 host was shut down. Local setup
+(`make contract`, see `docs/LOCAL_SETUP.md`) deploys its own copy with a locally generated admin:
+
+| Field | Value |
+|---|---|
+| Contract ID | `CCLJ7AHAZUEFS5C74MMOXANKIPI3PULGPSQHMEZEALY52HYNWX3DCV64` |
+| Admin | `GD46WV32GWWNEWGPGZ3W5UMPSRGKKAVMM5RCRRWPZ4SLK2EE7XLV33H6` (`liralink-local-platform`) |
+| Wasm hash | `f95d67feb7dd55ca72eaf49bc0c7dc61e1955b83fc65e273f2d3875c47370950` (same as above) |
+| Deploy tx | `811f09b67a115854a11c6f575e7da43612ecb0e91e44d03a33f4bfac22a3249f` |
