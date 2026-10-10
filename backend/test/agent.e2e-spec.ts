@@ -30,7 +30,9 @@ describe('Assistant (e2e)', () => {
 
   // The scripted model: each create() call shifts the next canned response.
   const script: object[] = [];
-  const create = jest.fn(() => Promise.resolve(script.shift()));
+  const create = jest.fn((params: unknown) =>
+    Promise.resolve(script.shift() ?? { params }),
+  );
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
