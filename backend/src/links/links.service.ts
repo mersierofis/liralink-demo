@@ -178,6 +178,20 @@ export class LinksService {
     return link;
   }
 
+  /** Scoped lookup by public code: another merchant's code is indistinguishable from an unknown one. */
+  async findOneByCodeForMerchant(
+    merchantId: string,
+    code: string,
+  ): Promise<LinkWithRelations> {
+    const link = await this.prisma.paymentLink.findUnique({
+      where: { code },
+      include: LINK_INCLUDE,
+    });
+    if (!link || link.merchantId !== merchantId)
+      throw new NotFoundException('Payment link not found');
+    return link;
+  }
+
   async cancel(merchantId: string, id: string) {
     const link = await this.findOneForMerchant(merchantId, id);
     if (link.status !== 'open') {
