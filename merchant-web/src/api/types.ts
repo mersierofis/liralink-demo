@@ -246,3 +246,32 @@ export interface FxResponse {
   source: 'mock' | 'live';
   fetchedAt: string;
 }
+
+// ---- Assistant (POST /agent/chat, /agent/proposals/:id/confirm|cancel) — see docs/00-PROJECT.md §6 ----
+export interface AgentToolCall {
+  name: 'get_fx_quote' | 'get_payment_link' | 'list_payment_links' | 'create_payment_link';
+  input: Record<string, unknown>;
+  summary: string; // built by the server, not by the model
+}
+
+export interface AgentProposal {
+  id: string;
+  title: string;
+  description?: string;
+  amountTRY: string; // 2 dp
+  estimatedUSDC: string; // 2 dp, an estimate — the created link locks its own quote
+  expiresAt: string;
+}
+
+export interface AgentChatResponse {
+  conversationId: string;
+  reply: string;
+  toolCalls: AgentToolCall[];
+  proposal?: AgentProposal;
+}
+
+export interface AgentProposalCancelled {
+  id: string;
+  status: 'cancelled';
+}
+

@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@ta
 
 import { apiRequest } from './client'
 import type {
+  AgentChatResponse,
+  AgentProposalCancelled,
   AuthResult,
   Balance,
   LinkStatus,
@@ -174,5 +176,31 @@ export function useUnallocated(page: number, limit: number, enabled: boolean) {
     queryKey: ['unallocated', page, limit],
     queryFn: () => apiRequest<UnallocatedList>(`/unallocated?page=${page}&limit=${limit}`),
     enabled,
+  })
+}
+
+export function useAgentChat() {
+  return useMutation({
+    mutationFn: (body: { conversationId?: string; message: string }) =>
+      apiRequest<AgentChatResponse>('/agent/chat', { method: 'POST', body }),
+  })
+}
+
+export function useConfirmProposal() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (proposalId: string) =>
+      apiRequest<PaymentLink>(`/agent/proposals/${proposalId}/confirm`, { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['links'] })
+      queryClient.invalidateQueries({ queryKey: ['balance'] })
+    },
+  })
+}
+
+export function useCancelProposal() {
+  return useMutation({
+    mutationFn: (proposalId: string) =>
+      apiRequest<AgentProposalCancelled>(`/agent/proposals/${proposalId}/cancel`, { method: 'POST' }),
   })
 }
