@@ -80,15 +80,16 @@ The **Anchors** skill is a community skill in its own repo, not part of `stellar
 
 Contract ID, wasm hash and deploy txs: **[docs/deployments.md](docs/deployments.md)** (`CDKZYQI4…45EJ`, testnet).
 
-## LiraLink Agent (Week 1: read-only)
+## LiraLink Agent (Week 2)
 
-A command-line assistant for merchants, built on the Claude API. It answers questions in plain language using three read-only tools against the local API:
+A command-line assistant for merchants, built on the Claude API. It answers questions in plain language using four tools against the local API:
 
 - `get_fx_quote`: convert a TRY amount to USDC at the current rate (`GET /api/fx`)
-- `get_payment_link`: look up one payment link by code (status, amounts, rail)
-- `list_payment_links`: list the merchant's links by status
+- `get_payment_link`: look up one of the merchant's own payment links by code (status, amounts, rail)
+- `list_payment_links`: list the merchant's links by status (`open`, `underpaid`, `paid`, `expired`, `cancelled`)
+- `create_payment_link`: **propose** a new link (title, amount in TRY, optional description)
 
-It cannot create or change links or move money; it says so and points to the merchant panel. Amounts and statuses always come from tool results, never from the model.
+The model only proposes. Confirmation happens in code: the terminal shows the title, the TRY amount and the estimated USDC, then asks `Create this link? (y/n)`. Only `y` calls `POST /api/links`; anything else cancels. Amounts above `AGENT_MAX_LINK_TRY` (default `340`, about 10 USDC on testnet) are rejected without asking. The agent cannot change or cancel existing links or move money. Every tool call and every confirm/cancel is appended to `backend/agent-audit.log` (JSON lines, gitignored).
 
 ```bash
 make dev                # start the local stack
@@ -96,7 +97,19 @@ cd backend
 node --env-file=.env scripts/agent.mjs
 ```
 
-`backend/.env` needs `ANTHROPIC_API_KEY` and `LLM_MODEL`.
+`backend/.env` needs `ANTHROPIC_API_KEY` and `LLM_MODEL`. Optional: `AGENT_MAX_LINK_TRY`.
+
+### Evals
+
+12 cases (FX quotes, status checks, link creation, over-limit, merchant isolation, prompt injection, off-topic, secrets) in `backend/scripts/evals/cases.json`. Each runs in a fresh conversation and any confirmation is auto-answered "n", so the runs create no links.
+
+```bash
+cd backend
+node --env-file=.env scripts/evals/run-evals.mjs                  # model from LLM_MODEL
+node --env-file=.env scripts/evals/run-evals.mjs --model <id>     # compare another model
+```
+
+The runner needs the stack running. On first run it creates a second test merchant (`eval-merchant-b@example.com`) and two fixture links, then reuses them (codes are kept in the gitignored `backend/scripts/evals/.fixtures.json`). It prints a PASS/FAIL table and writes [docs/evals/latest.md](docs/evals/latest.md).
 
 Code: [`backend/scripts/agent.mjs`](backend/scripts/agent.mjs), behaviour rules: [`backend/scripts/system-prompt.md`](backend/scripts/system-prompt.md), what we tried and decided: [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 

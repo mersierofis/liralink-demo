@@ -7,3 +7,7 @@ build/
 coverage/
 .turbo/
 .tmp-node22/
+
+# AI agent audit trail (JSON lines)
+backend/agent-audit.log
+backend/scripts/evals/.fixtures.json
