@@ -7,6 +7,7 @@ import { AppShell } from '@/layout/AppShell'
 import LoginPage from '@/pages/Login'
 import RegisterPage from '@/pages/Register'
 import DashboardPage from '@/pages/Dashboard'
+import AssistantPage from '@/pages/Assistant'
 import LinksPage from '@/pages/Links'
 import LinkDetailPage from '@/pages/LinkDetail'
 import PaymentsPage from '@/pages/Payments'
@@ -29,6 +30,7 @@ export default function App() {
                     <Route path="/" element={<DashboardPage />} />
                     <Route path="/links" element={<LinksPage />} />
                     <Route path="/links/:id" element={<LinkDetailPage />} />
+                    <Route path="/assistant" element={<AssistantPage />} />
                     <Route path="/payments" element={<PaymentsPage />} />
                     <Route path="/withdrawals" element={<WithdrawalsPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
