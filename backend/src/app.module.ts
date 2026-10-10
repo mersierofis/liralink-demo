@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { AgentModule } from './agent/agent.module';
 import { AuthModule } from './auth/auth.module';
 import { BalanceModule } from './balance/balance.module';
 import { ConfigModule } from './config/config.module';
@@ -36,6 +37,7 @@ import { WithdrawalsModule } from './withdrawals/withdrawals.module';
     WithdrawalsModule,
     UnallocatedModule,
     UsdcWithdrawalsModule,
+    AgentModule,
   ],
 })
 export class AppModule {}
