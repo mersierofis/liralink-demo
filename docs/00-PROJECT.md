@@ -219,6 +219,16 @@ Balance: `availableTRY = Σ netTRY of completed balance-mode (mock) settlements 
 | GET | `/pay/:code/agent` | **x402 (testnet only, experimental).** Without a `PAYMENT-SIGNATURE` header → `402` `PaymentRequired` (x402 v2 body + base64 `PAYMENT-REQUIRED` header: `exact` scheme, `stellar:testnet`, USDC SAC, `amount` = amount due in 7-dp base units, `payTo` = platform account; no memo — the URL identifies the link). With a valid header → the x402.org (Coinbase) facilitator verifies + settles, the backend reads the transfer back from Horizon and credits it (`Payment.rail = 'x402'`) → `200 { code, linkStatus, rail, network, facilitator, credit, reason?, settlement, payment: Payment \| null }` + `PAYMENT-RESPONSE` header. If the facilitator **times out** settling (outcome unknown) → `202 { code, status: 'pending', x402SettlementId, rail, network, facilitator }`; the backend reconciles it every minute (credits it only if a transaction carrying the payer's signed auth entries shows up on Horizon — never by payer + amount — retries the settle while the auth entries are valid, else fails it) — poll `/pay/:code/status`. `409` if the link isn't `open`/`underpaid` or the settled tx hash was already processed; `503` if x402 is disabled or the facilitator is down |
 | GET | `/pay/:code/status` | `{ status: LinkStatus, receivedUSDC, shortfallUSDC?, payment?: Payment, payments: Payment[] }` — poll every 2 s (`payments` = every transfer, `payment` = the latest/completing one) |
 
+### Assistant (merchant)
+The merchant-panel chat agent (`backend/src/agent`). It only **proposes** payment links; creating one needs the merchant's own confirm call. Conversations and proposals are in memory (lost on restart).
+| Method | Path | Body → Response |
+|---|---|---|
+| POST | `/agent/chat` | `{ conversationId?, message }` (`message` ≤ 2000 chars) → `200 AgentChatResponse` `{ conversationId, reply, toolCalls: { name, input, summary }[], proposal?: AgentProposal }`. An unknown/expired `conversationId` starts a new conversation (the response carries the new id). `proposal` is the pending proposal created in this turn, if any. `409` while the same conversation is still answering; `429` per-minute throttle (20/min per merchant) or the daily cap (`AGENT_DAILY_LIMIT`, default 200); `503` if `ANTHROPIC_API_KEY`/`LLM_MODEL` are not configured |
+| POST | `/agent/proposals/:id/confirm` | → `201 PaymentLink` (same as `POST /links`). `404` unknown proposal or another merchant's, `409` already confirmed/cancelled, `410` expired (10 min), `4xx` as `POST /links` if it rejects the amount |
+| POST | `/agent/proposals/:id/cancel` | → `200 { id, status: 'cancelled' }` (same `404`/`409`/`410` rules) |
+
+Limits: a proposal's `amountTRY` must be 1.00 – `AGENT_MAX_LINK_TRY` (default 340, ≈ 10 USDC on testnet); above that the model gets an error and no proposal is created. `AgentProposal` = `{ id, title, description?, amountTRY, estimatedUSDC, expiresAt }`.
+
 ### System
 | Method | Path | Response |
 |---|---|---|
