@@ -27,7 +27,7 @@ const tools = [
   {
     name: 'get_payment_link',
     description:
-      'Get one payment link by its code (e.g. S7473UAW): status (open, paid, expired, underpaid, overpaid), amounts, and which rail detected the payment.',
+      'Get one payment link by its code (e.g. S7473UAW): status (open, underpaid, paid, expired, cancelled), amounts, and which rail detected the payment.',
     input_schema: {
       type: 'object',
       properties: { code: { type: 'string' } },
@@ -43,7 +43,7 @@ const tools = [
       properties: {
         status: {
           type: 'string',
-          enum: ['open', 'paid', 'expired', 'underpaid', 'overpaid'],
+          enum: ['open', 'underpaid', 'paid', 'expired', 'cancelled'],
         },
       },
     },
@@ -95,7 +95,11 @@ async function runTool(name, input) {
       };
     }
     if (name === 'get_payment_link') {
-      return await get(`/pay/${encodeURIComponent(input.code)}`);
+      const code = String(input.code).toUpperCase();
+      const mine = await get(`/links?limit=100`);
+      const owns = (mine.items ?? []).some((l) => l.code === code);
+      if (!owns) return { error: 'Link not found for this merchant.' };
+      return await get(`/pay/${encodeURIComponent(code)}`);
     }
     if (name === 'list_payment_links') {
       // ③ Check the list path and the status filter parameter
