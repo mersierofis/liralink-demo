@@ -8,8 +8,10 @@ The hosted demo server has been shut down. The whole stack (Postgres, API, merch
 
 Demo videos:
 
-- Ep 1: https://youtu.be/zz3Qc1Fh7Fs
-- Ep 2: https://youtu.be/L6u9Yq2Zx3w
+- Ep 1: What is an AI agent? https://youtu.be/zz3Qc1Fh7Fs
+- Ep 2: From LLM to a working agent https://youtu.be/L6u9Yq2Zx3w
+- Ep 3: I tried to break my own AI agent https://youtu.be/ymn29HH5Flc
+- Ep 4: My agent takes its first action https://youtu.be/4hXC3uzM7Vg
 
 ## Architecture
 
