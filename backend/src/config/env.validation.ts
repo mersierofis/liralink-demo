@@ -47,6 +47,15 @@ export const envSchema = z.object({
     .string()
     .optional()
     .default('https://x402.org/facilitator'),
+
+  // Merchant-panel assistant (POST /agent/chat). Empty key or model: /agent/chat answers 503 and
+  // the rest of the app is unaffected. The key never leaves the backend.
+  ANTHROPIC_API_KEY: z.string().optional().default(''),
+  LLM_MODEL: z.string().optional().default(''),
+  // Largest link the assistant may even propose (≈ 10 USDC at the mock rate of 34.00).
+  AGENT_MAX_LINK_TRY: z.coerce.number().positive().default(340),
+  // Per-merchant /agent/chat requests per UTC day (in memory, resets on restart).
+  AGENT_DAILY_LIMIT: z.coerce.number().int().positive().default(200),
 });
 
 export type Env = z.infer<typeof envSchema>;

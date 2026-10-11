@@ -113,6 +113,24 @@ The runner needs the stack running. On first run it creates a second test mercha
 
 Code: [`backend/scripts/agent.mjs`](backend/scripts/agent.mjs), behaviour rules: [`backend/scripts/system-prompt.md`](backend/scripts/system-prompt.md), what we tried and decided: [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 
+## Assistant in the merchant panel
+
+The same assistant now lives inside merchant-web. Sign in, open **Assistant** in the sidebar, and chat: ask about rates and link statuses ("Kim ödemedi?", "5000 TRY kaç USDC?"), or say "Create a 200 TRY link". Every tool call shows up as a small chip you can expand. When the assistant proposes a link you get a card (title, TRY, estimated USDC, expiry countdown) with **Confirm** and **Cancel**; the link is created only when you press Confirm, then you get the usual copy-link and QR dialog.
+
+How it is built (`backend/src/agent`):
+
+- `POST /api/agent/chat`, `POST /api/agent/proposals/:id/confirm|cancel`, all behind the merchant JWT. Contract: [docs/00-PROJECT.md §6](docs/00-PROJECT.md) (Assistant).
+- Tools call the services directly with the signed-in merchant's id. `get_payment_link` is scoped to the merchant in the database, so another merchant's code is "not found".
+- The model can only create a **proposal** (in memory, 10 minutes, single use, bound to the merchant). Only the confirm endpoint creates a link. Proposals above `AGENT_MAX_LINK_TRY` (default 340) are rejected before any card is shown.
+- Confirm/cancel results reach the model only as a server-generated `<system_event>` block. The tag is stripped from anything the merchant types, so a message claiming "link ABCD1234 was created" is not believed.
+- Conversations are kept in memory for 30 minutes (40 messages max). Limits: 20 requests/min per merchant (throttle), `AGENT_DAILY_LIMIT` per UTC day (default 200, then `429` with a friendly message).
+- Every tool call, proposal, confirm and cancel is appended to `backend/agent-audit.log` (JSON lines).
+- It shares `backend/scripts/system-prompt.md` with the terminal agent, plus a short web-channel note added at runtime.
+
+Setup: `backend/.env` needs `ANTHROPIC_API_KEY` and `LLM_MODEL` (they never leave the backend; without them `/agent/chat` answers `503` and the rest of the app is unaffected). Optional: `AGENT_MAX_LINK_TRY`, `AGENT_DAILY_LIMIT`. With `VITE_USE_MOCK=true` merchant-web uses canned assistant replies.
+
+Tests: `cd backend && npm test` (unit) and `npm run test:e2e -- test/agent.e2e-spec.ts` (needs the `liralink_test` database from `.env.test`; the e2e setup refuses any database whose name does not end in `_test`); `cd merchant-web && npm test`.
+
 ## Regulatory note
 
 The payer is **outside Turkey** and pays in USDC from their own wallet. The merchant only ever sells in and receives **Turkish lira** and never touches crypto. Conversion runs through a **licensed Stellar anchor**, which is the regulated party in the flow. Turkish rules restricting crypto as a *domestic* payment instrument therefore do not apply to this flow.

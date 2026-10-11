@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Link2, Receipt, Landmark, Settings } from 'lucide-react'
+import { LayoutDashboard, Link2, Receipt, Landmark, Settings, Sparkles } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/auth/AuthProvider'
@@ -14,6 +14,7 @@ export function Sidebar() {
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
     { to: '/links', label: 'Links', icon: Link2 },
     { to: '/payments', label: 'Payments', icon: Receipt },
+    { to: '/assistant', label: 'Assistant', icon: Sparkles },
     { to: '/withdrawals', label: isAutoPayout ? 'Payouts' : 'Withdrawals', icon: Landmark },
     { to: '/settings', label: 'Settings', icon: Settings },
   ]

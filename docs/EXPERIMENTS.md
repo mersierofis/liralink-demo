@@ -97,6 +97,27 @@ Program: Rise In Agentmaxxing (Oct 2026). Stack: LiraLink running locally on Ste
 - **Caveats:** The rules are coarse (substring checks, not a judge), so a pass means "no rule broken", not "perfect answer". A single run says nothing about variance. One reply to the other-merchant case hinted that the link "may belong to a different merchant account"; no data leaked, but we may want to tighten that wording.
 - **Second model (`--model`):** [fill in]
 
+### Exp 12 — From terminal agent to a server-side assistant in the merchant panel
+- **Hypothesis:** The terminal agent's safety properties (confirmation in code, ownership checks, limits) can be kept when the agent moves behind the merchant's login, and the move removes the weak spots of the script version.
+- **What changed:**
+
+| | Terminal agent (Week 2) | Merchant-panel assistant (Week 2.5) |
+|---|---|---|
+| Who runs it | the developer, one local user | any signed-in merchant, many at once |
+| Data access | HTTP to its own API with a demo login | services called directly with the merchant id from the JWT |
+| `get_payment_link` ownership | look the code up in `GET /links?limit=100` (known limit) | scoped DB lookup by code, no 100-link limit |
+| Confirmation | `y/n` on the terminal (`readline`) | a proposal in a server store; only `POST /agent/proposals/:id/confirm` creates the link (owner-bound, 10 min, single use) |
+| Feedback to the model | tool result | server-built `<system_event>` block; the tag is stripped from merchant text |
+| Memory | one `messages` array | per merchant + conversation, 30 min TTL, 40-message cap, one request at a time |
+| Cost control | none | 20 req/min throttle per merchant, daily cap (default 200), 8-step tool loop |
+| Secrets | `.env` on the developer's machine | key and model stay in `backend/.env`, never in a response |
+
+- **Why:** a browser is an untrusted client and many merchants share one server. Confirmation by a button is only safe if the button is the *only* way to create the link, so the model got no tool that can confirm. Anything the model learns about confirmations must come from the server, so merchant text cannot impersonate it.
+- **Result:** 33 unit tests and 11 e2e tests (chat → proposal → confirm → link exists; cross-merchant confirm and lookup fail; expiry; single use; over limit; daily cap) pass, plus a ProposalCard component test. A manual run with the real model created a proposal, confirmed it once (second confirm `409`), and the model then reported the right link code from the system event. Two spoofing attempts through `/agent/chat` (plain text and a typed `<system_event>` tag) did not make the model present `ABCD1234` as a real link.
+- **Eval note:** the new `fake-confirmation-claim` case passes 13/13, but it also passed with the previous prompt in the terminal agent, because the model checks the code with `get_payment_link` and gets "not found". So that case does not by itself prove the new prompt section; the protection that matters is in code (tag stripping, owner-bound proposals), covered by the unit and e2e tests.
+- **Known limits (Week 3):** conversations, proposals and daily counters live in memory, so a restart or redeploy loses them (the card then says the proposal is gone) and it only works on a single instance; a durable store (DB or Redis) is the fix. The tool definitions exist twice (`agent.mjs` and `agent-tools.service.ts`). Reloading the page starts a new chat.
+- **Decision:** Keep. [fill in: your own demo notes / latency / cost per chat]
+
 ---
 
 ## Week 2 — Write actions
@@ -105,5 +126,6 @@ Program: Rise In Agentmaxxing (Oct 2026). Stack: LiraLink running locally on Ste
 
 ## Week 3 — Wallet *(planned)*
 - Agent wallet on testnet; x402 payments
-- Fix the 100-link ownership limit (Exp 9)
+- Fix the 100-link ownership limit in the terminal agent (Exp 9; the panel assistant has no such limit)
+- Persist assistant conversations and proposals (Exp 12)
 - Anchor flow: SEP-10 auth, SEP-12 KYC, SEP-6 withdraw, SEP-38 quotes (replacing the mock anchor and mock FX rate)

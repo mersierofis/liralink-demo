@@ -1,7 +1,7 @@
 import { http, HttpResponse, type HttpHandler } from 'msw'
 
 import { MOCK_TOKEN, computeBalance, seed, simulatePayment, state } from './data'
-import type { ApiError, LinkStatus, PaymentLink, PaymentListItem, Withdrawal } from '@/api/types'
+import type { AgentChatResponse, AgentProposal, ApiError, LinkStatus, PaymentLink, PaymentListItem, Withdrawal } from '@/api/types'
 
 seed()
 
@@ -16,7 +16,114 @@ function requireAuth(request: Request) {
   return null
 }
 
+// ---- Assistant mock: canned replies keyed on the message, in-memory proposals ----
+const mockProposals = new Map<string, AgentProposal & { status: 'pending' | 'confirmed' | 'cancelled' }>()
+
+function mockAgentReply(message: string): AgentChatResponse {
+  const conversationId = 'mock-conversation'
+  const lower = message.toLowerCase()
+  const amount = message.match(/(\d+(?:[.,]\d+)?)\s*(?:try|tl)/i)?.[1]?.replace(',', '.')
+
+  if (/link/.test(lower) && /create|oluştur|yarat|propose/.test(lower) && amount) {
+    if (Number(amount) > 340) {
+      return {
+        conversationId,
+        reply: 'Links made here are limited to 340 TRY. You can create larger links on the Links page.',
+        toolCalls: [
+          { name: 'create_payment_link', input: { title: 'Payment', amountTRY: Number(amount) }, summary: 'Over the assistant limit: 340 TRY' },
+        ],
+      }
+    }
+    const proposal = {
+      id: `mock-proposal-${Math.random().toString(36).slice(2, 8)}`,
+      title: 'Payment',
+      amountTRY: Number(amount).toFixed(2),
+      estimatedUSDC: (Number(amount) / 34).toFixed(2),
+      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    }
+    mockProposals.set(proposal.id, { ...proposal, status: 'pending' })
+    return {
+      conversationId,
+      reply: 'The proposal is ready for you to confirm.',
+      toolCalls: [
+        { name: 'create_payment_link', input: { title: proposal.title, amountTRY: Number(amount) }, summary: `Proposal: "Payment", ${proposal.amountTRY} TRY (waiting for your confirmation)` },
+      ],
+      proposal,
+    }
+  }
+  if (/usdc|dolar/.test(lower) && amount) {
+    const usdc = (Number(amount) / 34).toFixed(2)
+    return {
+      conversationId,
+      reply: `${amount} TRY is about ${usdc} USDC at the current rate of 34.00 TRY per USDC (mock rate).`,
+      toolCalls: [{ name: 'get_fx_quote', input: { amountTRY: Number(amount) }, summary: `${amount} TRY ≈ ${usdc} USDC (rate 34.00, mock)` }],
+    }
+  }
+  if (/ödemedi|paid|unpaid/.test(lower)) {
+    const open = state.links.filter((l) => l.status === 'open')
+    return {
+      conversationId,
+      reply: open.length ? `You have ${open.length} open links that have not been paid yet.` : 'Every link is paid.',
+      toolCalls: [{ name: 'list_payment_links', input: { status: 'open' }, summary: `${open.length} links with status open` }],
+    }
+  }
+  return {
+    conversationId,
+    reply: 'I can convert TRY to USDC, check your payment links, and propose a new link for you to confirm.',
+    toolCalls: [],
+  }
+}
+
 export const handlers: HttpHandler[] = [
+  http.post('*/api/agent/chat', async ({ request }) => {
+    const authError = requireAuth(request)
+    if (authError) return authError
+    const body = (await request.json()) as { message: string }
+    await new Promise((r) => setTimeout(r, 600))
+    return HttpResponse.json(mockAgentReply(body.message))
+  }),
+
+  http.post('*/api/agent/proposals/:id/confirm', ({ request, params }) => {
+    const authError = requireAuth(request)
+    if (authError) return authError
+    const p = mockProposals.get(String(params.id))
+    if (!p) return error(404, 'Proposal not found')
+    if (p.status !== 'pending') return error(409, `This proposal was already ${p.status}.`)
+    if (Date.now() >= new Date(p.expiresAt).getTime()) return error(410, 'This proposal has expired. Ask the assistant again.')
+    p.status = 'confirmed'
+    const code = `MOCK${Math.random().toString(36).slice(2, 6).toUpperCase()}`
+    const link: PaymentLink = {
+      id: `link-${code}`,
+      code,
+      merchantId: state.merchant.id,
+      merchantName: state.merchant.businessName,
+      title: p.title,
+      amountTRY: p.amountTRY,
+      quotedUSDC: (Math.ceil((Number(p.amountTRY) / 34) * 1e7) / 1e7).toFixed(7),
+      fxRate: '34.0000000',
+      quoteExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      status: 'open',
+      expiresAt: new Date(Date.now() + 24 * 3_600_000).toISOString(),
+      payUrl: `http://localhost:5174/p/${code}`,
+      receivedUSDC: '0',
+      payments: [],
+      onchain: null,
+      createdAt: new Date().toISOString(),
+    }
+    state.links.unshift(link)
+    return HttpResponse.json(link, { status: 201 })
+  }),
+
+  http.post('*/api/agent/proposals/:id/cancel', ({ request, params }) => {
+    const authError = requireAuth(request)
+    if (authError) return authError
+    const p = mockProposals.get(String(params.id))
+    if (!p) return error(404, 'Proposal not found')
+    if (p.status !== 'pending') return error(409, `This proposal was already ${p.status}.`)
+    p.status = 'cancelled'
+    return HttpResponse.json({ id: p.id, status: 'cancelled' })
+  }),
+
   http.post('*/api/auth/register', async ({ request }) => {
     const body = (await request.json()) as { email: string; businessName: string }
     state.merchant = { ...state.merchant, email: body.email, businessName: body.businessName }
